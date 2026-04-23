@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+import rospy
+import actionlib
+import numpy as np
+from control_msgs.msg import FollowJointTrajectoryAction, FollowJointTrajectoryGoal
+from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
+from geometry_msgs.msg import Point # Importar el tipo de mensaje Point
+from functions import *
+from std_msgs.msg import Float32MultiArray
+
+# Variable global para almacenar la posición del QR
+# Se inicializa a None y se actualizará en el callback
+Pos_QR = None 
+num_QR = 1 
+
+qr_global_positions = {
+    100 : None,
+    200 : None,
+    300 : None,
+    400 : None
+}
+
+def qr_pose_callback(msg):
+    """
+    Función de callback para el suscriptor del tópico /qr_pose.
+    Almacena la posición del QR en la variable global Pos_QR.
+    """
+    global Pos_QR
+    global num_QR
+    # Almacenar las coordenadas x, y, z como un array de NumPy
+    Pos_QR = msg.data 
+    num_data = len(Pos_QR)
+   
+    if num_data > 3:
+        num_QR = num_data // 3
+    else:
+        num_QR = 1
+   
+
+if __name__ == '__main__':
+    rospy.init_node("ur5_paneo_base")
+
+    # Suscriptor al tópico /qr_pose de tipo Point
+    rospy.Subscriber("/qr_pose", Float32MultiArray, qr_pose_callback)
+    print("Suscrito al tópico /qr_pose. Esperando datos del QR...")
+
+    # Cliente para el controlador del UR5
+    robot_client = actionlib.SimpleActionClient(
+        '/scaled_pos_joint_traj_controller/follow_joint_trajectory',
+        FollowJointTrajectoryAction
+    )
+
+    print("Esperando conexión con el servidor...")
+    robot_client.wait_for_server()
+    print("Conectado al servidor.")
+
+    joint_names = [
+        'shoulder_pan_joint',
+        'shoulder_lift_joint',
+        'elbow_joint',
+        'wrist_1_joint',
+        'wrist_2_joint',
+        'wrist_3_joint'
+    ]
+
+    # Posición inicial
+    Q0 = np.array([-0.49, -1.55, -2.28, -2.34, -0.5, 0])
+
+    # Parámetros del paneo
+    delta_angle = np.deg2rad(7) 
+    num_steps = 5         
+    delay = 3
+    R_eff_cam = np.array([
+            [-1, 0, 0],
+            [0, -1, 0],
+            [0, 0, 1]
+        ])
+
+    # Movimiento de ida
+    for i in range(num_steps):
+        q = Q0.copy()
+        q[0] -= i * delta_angle 
+        
+        DH06 = fkine_ur5(q)
+        Pos_eff = DH06[0:3, 3]
+        R_base_eff = DH06[0:3, 0:3]
+        
+       
+        goal = FollowJointTrajectoryGoal()
+        goal.trajectory = JointTrajectory()
+        goal.trajectory.joint_names = joint_names
+
+        point = JointTrajectoryPoint()
+        point.positions = q
+        point.velocities = [0]*6
+        point.time_from_start = rospy.Duration(delay)
+        goal.trajectory.points.append(point)
+
+        print(f"Moviendo a posición {i+1}/{num_steps}: base={np.rad2deg(q[0]):.2f}°")
+        robot_client.send_goal(goal)
+        robot_client.wait_for_result()
+        temp = 1
+        
+        # Comprobar si ya se ha recibido la posición del QR
+        if Pos_QR is not None and temp == 1:
+            for j in range(num_QR):
+                Pos_QRt = np.array([Pos_QR[4*j],Pos_QR[4*j+1],Pos_QR[4*j+2]])
+                qr_id = Pos_QR[4*j+3]
+                print(qr_id)
+                Pos_base_QR = (R_base_eff @ R_eff_cam @ Pos_QRt) + Pos_eff
+                qr_global_positions[qr_id] = Pos_base_QR.copy()
+                
+                print(f"Posición del QR en coordenadas base (paso {i+1}): {Pos_base_QR}")
+                print(f"QR ID {qr_id} → Pos base: {Pos_base_QR}")
+                temp = 0
+                     
+        else:
+            print("Esperando la primera lectura de Pos_QR...")
+        
+    print("Paneo completado.")
+    print(qr_global_positions)
+    
+    
+    valor = input("Ingresa un número: ")
+    print("Ingresaste:", valor)
+    valor = int(valor)
+ 
+    xdes = qr_global_positions[valor]
+    xdes[1] = xdes[1]+0.20
+    error = 1000
+    
+    DH06 = fkine_ur5(q)
+    x = DH06[0:3, 3]
+    freq = 1
+    dt = 1/freq
+    delay = 0.5
+    rate = rospy.Rate(freq)
+    
+    R_deseada  = np.array([[1, 0, 0],
+              			[0, 0, -1],
+              			[0, 1, 0]])
+    
+    while error > 0.01 :  
+        #Cinematica directa
+        DH06 = fkine_ur5(q)
+        x = DH06[0:3, 3]
+        R = DH06[0:3, 0:3]
+              
+        #Error Posicion
+        e_pos = xdes - x
+        
+        
+        #Error orientacion
+        R_err = R_deseada @ R.T
+                
+        e_rot = 0.5 * np.array([
+                    R_err[2,1] - R_err[1,2],
+                    R_err[0,2] - R_err[2,0],
+                    R_err[1,0] - R_err[0,1]
+                   ])
+       
+                  
+        # Control
+        v = np.concatenate([
+        0.3 * e_pos,
+        0.3 * e_rot])
+
+        
+        #Control cinematico
+        Jac = jacobian_ur5(q)
+        dq = np.linalg.pinv(Jac) @ v
+        q = q + dt * dq
+
+        error=np.linalg.norm(np.concatenate([e_pos, e_rot]))
+       
+        goal = FollowJointTrajectoryGoal()
+        goal.trajectory = JointTrajectory()
+        goal.trajectory.joint_names = joint_names
+
+        point = JointTrajectoryPoint()
+        point.positions = q
+        point.velocities = [0]*6
+        point.time_from_start = rospy.Duration(delay)
+        goal.trajectory.points.append(point)
+
+
+        robot_client.send_goal(goal)
+        robot_client.wait_for_result()
+        
+        DH06 = fkine_ur5(q)
+        x = DH06[0:3, 3]
+        e_pos = xdes - x
+        error = np.linalg.norm(e_pos)
+      
+            
+        rate.sleep()
+    
+    
+    rospy.signal_shutdown("Paneo terminado.")
