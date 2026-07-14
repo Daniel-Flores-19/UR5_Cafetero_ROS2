@@ -1,0 +1,29 @@
+<?xml version="1.0" ?>
+<sdf version='1.6'>
+  <model name='bidon'>
+    <link name='link_1'>
+	    <inertial>
+        <mass>2</mass>
+        <pose frame=''>0 0 0 0 0 0</pose>
+        <inertia>
+          <ixx>0.1</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>0.1</iyy>
+          <iyz>0</iyz>
+          <izz>0.1</izz>
+        </inertia>
+      </inertial>
+      <pose frame=''>0 0 0 0 -0 0</pose>
+      <visual name='visual'>
+        <geometry>
+          <mesh>
+            <uri>meshes/Untitled.obj</uri>
+          </mesh>
+        </geometry>
+		    <meta><layer>1</layer></meta>
+      </visual>
+    </link>
+    <static>true</static>
+  </model>
+</sdf>
