@@ -34,6 +34,27 @@ This will allow the user to use this entire project with/without docker
 
 ## Usage 
 ### With Docker
+To use it with docker we need to build the image inside the repo.
+```bash
+cd ros2_ws/src/UR5_Cafetero_ROS2
+docker build -t ur5_draw .
+```
+Then, we should be able to see the ID and the name of the image
+```bash
+docker ps
+```
+To run a terminal inside the container, it is recommended to add local connections to enable RVIZ2 and Gazebo
+```bash
+xhost +local:docker
+docker run -it --network=host --ipc=host -v /tmp/.X11-unix:/tmp/.X11-unix:rw --env=DISPLAY ur5_draw:latest
+```
+
+Once inside the container, we should be able to see all the files and build the workspace with all the packages.
+```bash
+cd ros2_ws
+colcon build
+source install/setup.bash
+```
 
 
 ## Project structure
