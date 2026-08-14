@@ -22,7 +22,19 @@ If you don't want to use docker:
 
 ## Installation instructions
 
+After installing the required packages from the UR5 official repo, we just need to clone this repo into the same workspace
+```bash
+cd ros2_ws/src
+git clone https://github.com/Daniel-Flores-19/UR5_Cafetero_ROS2.git
+cd ..
+colcon build
+source install/setup.bash
+```
+This will allow the user to use this entire project with/without docker
+
 ## Usage 
+### With Docker
+
 
 ## Project structure
 
