@@ -14,7 +14,7 @@ This project requires the following softwares:
 - Ubuntu 22.04
 - ROS 2 [Humble](https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debs.html)
 - Gazebo Classic
-- Docker [Desktop] (https://docs.docker.com/desktop/setup/install/linux/ubuntu/)
+- Docker [Desktop](https://docs.docker.com/desktop/setup/install/linux/ubuntu/)
 
 If you don't want to use docker:
 - UR5 official [repo](https://github.com/UniversalRobots/Universal_Robots_ROS2_GZ_Simulation)
