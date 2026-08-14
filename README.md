@@ -6,7 +6,7 @@ This ros2 pkg vectorizes an image and creates paths for a robotic arm, such as a
 
 ## System diagram
 
-
+![Nodes and Topics graph](imgs/img_system.png)
 
 ## Prerquisites and dependencies
 
