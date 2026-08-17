@@ -75,29 +75,13 @@ ros2 topic pub /force_torque_sensor_broadcaster/wrench geometry_msgs/msg/WrenchS
 ## Project structure
 
 ```text
+├── bashrc
 ├── Dockerfile
+├── entrypoint.sh
+├── imgs
+│   └── img_system.png
 ├── LICENSE
 ├── README.md
-├── bashrc
-├── cafetero
-│   ├── cafetero
-│   │   ├── __init__.py
-│   │   ├── fk_functions.py
-│   │   ├── ik_functions.py
-│   │   ├── kine_control_functions.py
-│   │   ├── paneo_ur5.py
-│   │   ├── paneo_ur5_uniforme.py
-│   │   └── show_qr.py
-│   ├── package.xml
-│   ├── resource
-│   │   └── cafetero
-│   ├── setup.cfg
-│   ├── setup.py
-│   └── test
-│       ├── test_copyright.py
-│       ├── test_flake8.py
-│       └── test_pep257.py
-├── entrypoint.sh
 ├── ur5_algoritmos
 │   ├── launch
 │   │   ├── dibujo_completo.launch.py
@@ -113,6 +97,17 @@ ros2 topic pub /force_torque_sensor_broadcaster/wrench geometry_msgs/msg/WrenchS
 │   │   ├── test_flake8.py
 │   │   └── test_pep257.py
 │   └── ur5_algoritmos
+│       ├── array_new_v8.py
+│       ├── calibration_draw.py
+│       ├── fk_functions.py
+│       ├── ik_functions.py
+│       ├── imagen_trajectory_new.py
+│       ├── __init__.py
+│       ├── kine_control_functions.py
+│       ├── letter_trajectory_functions_img.py
+│       ├── letter_trajectory_functions_v7.py
+│       ├── markers.py
+│       ├── move_draw_sub.py
 │       ├── Playwrite_CU
 │       │   ├── OFL.txt
 │       │   ├── PlaywriteCU-VariableFont_wght.ttf
@@ -122,35 +117,7 @@ ros2 topic pub /force_torque_sensor_broadcaster/wrench geometry_msgs/msg/WrenchS
 │       │       ├── PlaywriteCU-Light.ttf
 │       │       ├── PlaywriteCU-Regular.ttf
 │       │       └── PlaywriteCU-Thin.ttf
-│       ├── QP_functions.py
-│       ├── QP_ur5.py
-│       ├── __init__.py
-│       ├── array_new_v7.py
-│       ├── array_new_v8.py
-│       ├── calibration_draw.py
-│       ├── fk_functions.py
-│       ├── fk_ur5.py
-│       ├── fk_ur5_gazebo.py
-│       ├── ik_functions.py
-│       ├── ik_ur5.py
-│       ├── imagen_trajectory.py
-│       ├── imagen_trajectory_new.py
-│       ├── kine_control_functions.py
-│       ├── kine_control_ur5.py
-│       ├── letter_trajectory_arrays.py
-│       ├── letter_trajectory_arrays_nuevo.py
-│       ├── letter_trajectory_functions.py
-│       ├── letter_trajectory_functions_img.py
-│       ├── letter_trajectory_functions_v6.py
-│       ├── letter_trajectory_functions_v7.py
-│       ├── markers.py
-│       ├── move_draw.py
-│       ├── move_draw_escale.py
-│       ├── move_draw_new.py
-│       ├── move_draw_sub.py
-│       ├── p_llm_interface.py
-│       ├── p_test_llm_track.py
-│       └── p_test_llm_track_gazebo.py
+│       └── QP_functions.py
 └── ur_simulation_gazebo
     ├── CMakeLists.txt
     ├── config
