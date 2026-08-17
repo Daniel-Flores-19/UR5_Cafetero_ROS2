@@ -53,7 +53,7 @@ class UR5ControlNode(Node):
 
         self.action_client = ActionClient(
             self, FollowJointTrajectory,
-            '/scaled_joint_trajectory_controller/follow_joint_trajectory',
+            '/joint_trajectory_controller/follow_joint_trajectory',
             callback_group=self.client_group)
 
         self.switch_ctrl_client = self.create_client(
@@ -310,7 +310,7 @@ class UR5ControlNode(Node):
             # ── FASE 2: cambiar a forward_position_controller ─────
             self.switch_my_controllers(
                 to_activate   = 'forward_position_controller',
-                to_deactivate = 'scaled_joint_trajectory_controller'
+                to_deactivate = 'joint_trajectory_controller'
             )
             self.phase = PHASE_DRAW
             print(self.phase)
@@ -464,7 +464,7 @@ class UR5ControlNode(Node):
             q_start = np.array([np.pi, -2.14, -1.34, -1.23, np.pi/2, 0.0])
             print("Fase Final")
             self.switch_my_controllers(
-                to_activate   = 'scaled_joint_trajectory_controller',
+                to_activate   = 'joint_trajectory_controller',
                 to_deactivate = 'forward_position_controller'
             )
             

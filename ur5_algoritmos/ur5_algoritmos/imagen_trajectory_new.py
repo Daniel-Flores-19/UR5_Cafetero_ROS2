@@ -134,7 +134,7 @@ class LetterTrajectoryPublisher(Node):
         self.get_logger().info(f"Texto: '{LETTER}' | Fuente: {font_name}")
 
         # Processing an image
-        image = cv2.imread('/home/utec/Downloads/bob_esponja_9564.png')
+        image = cv2.imread('/home/utec/Downloads/vp.jpeg')
         img_resized = ur5_resize_paper(image)
         img_canny = auto_canny_limits(img_resized)
         

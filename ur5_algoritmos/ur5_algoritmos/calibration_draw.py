@@ -52,7 +52,7 @@ class UR5CalibrationDraw(Node):
 
         self.action_client = ActionClient(
             self, FollowJointTrajectory,
-            '/scaled_joint_trajectory_controller/follow_joint_trajectory',
+            '/joint_trajectory_controller/follow_joint_trajectory',
             callback_group=self.client_group)
 
         self.switch_ctrl_client = self.create_client(
@@ -145,7 +145,7 @@ class UR5CalibrationDraw(Node):
         """Calcula el q inicial del círculo y mueve allí con scaled."""
         # Punto cartesiano inicial del círculo (t=0)
         self.switch_my_controllers(
-                to_activate   = 'scaled_joint_trajectory_controller', 
+                to_activate   = 'joint_trajectory_controller', 
                 to_deactivate = 'forward_position_controller'
             )
             
@@ -228,7 +228,7 @@ class UR5CalibrationDraw(Node):
             # ── FASE 2: cambiar a forward_position_controller ─────
             self.switch_my_controllers(
                 to_activate   = 'forward_position_controller',
-                to_deactivate = 'scaled_joint_trajectory_controller'
+                to_deactivate = 'joint_trajectory_controller'
             )
             
             #Posicion Inicial efector final
@@ -305,7 +305,7 @@ class UR5CalibrationDraw(Node):
             self.get_logger().info(f"Calibración guardada ({z_draw} m). Cerrando...")
             
             self.switch_my_controllers(
-                to_activate   = 'scaled_joint_trajectory_controller', 
+                to_activate   = 'joint_trajectory_controller', 
                 to_deactivate = 'forward_position_controller'
             )
             
