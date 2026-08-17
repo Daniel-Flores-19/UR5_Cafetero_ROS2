@@ -8,17 +8,32 @@ This ros2 pkg vectorizes an image and creates paths for a robotic arm, such as a
 
 ![Nodes and Topics graph](imgs/img_system.png)
 
-## Prerquisites and dependencies
+## Prerequisites and dependencies
 
-This project requires the following softwares:
+This project requires the following software:
 - Ubuntu 22.04
 - ROS 2 [Humble](https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debs.html)
 - Gazebo Classic
-- Docker [Desktop](https://docs.docker.com/desktop/setup/install/linux/ubuntu/)
+- Docker [Engine](https://docs.docker.com/engine/install/ubuntu/) (Docker Desktop is not required on Linux; the Engine + CLI is enough to build and run the image below)
 
 If you don't want to use docker:
 - UR5 official [repo](https://github.com/UniversalRobots/Universal_Robots_ROS2_GZ_Simulation)
 - Gazebo [Fortress](https://gazebosim.org/docs/latest/ros_installation/)
+
+### Python dependencies
+
+The trajectory-generation pipeline (`letter_trajectory_functions_img.py`, `imagen_trajectory_new.py`) additionally requires:
+- `numpy`
+- `opencv-python`
+- `Pillow`
+- `scikit-image` (imported as `skimage` — note this is a different PyPI package name than the import name; `pip install skimage` will fail)
+- `matplotlib`
+
+If installing manually (outside Docker):
+```bash
+pip3 install --user numpy opencv-python Pillow scikit-image matplotlib
+```
+If you hit a `UserWarning: Unable to import Axes3D` from matplotlib, it usually means both an apt-installed `python3-matplotlib` and a pip `--user` install are present on `sys.path`. This is generally harmless, but if you want a clean environment, install matplotlib in a virtual environment created with `--system-site-packages` instead of `pip install --user`.
 
 ## Installation instructions
 
@@ -56,21 +71,26 @@ colcon build
 source install/setup.bash
 ```
 
-Finally, you need to run two launch files in two different terminals:
+Finally, you need three terminals inside the container:
+
+**Terminal 1 — Gazebo + UR5 control:**
 ```bash
 ros2 launch ur_simulation_gazebo ur_sim_control.launch.py
 ```
 
-And:
+**Terminal 2 — calibration + drawing pipeline:**
 ```bash
 ros2 launch ur5_algoritmos dibujo_completo.launch.py
 ```
 
-Also, becuase this urdf does not has a force sensor, you have to simulate the feedback of one publishing a message on the force sensor topic:
+**Terminal 3 — simulated force feedback:**
+
+Because this URDF does not include a force/torque sensor, `calibration_draw` will wait indefinitely on `/force_torque_sensor_broadcaster/wrench` unless you publish a fake contact message yourself. This topic is only advertised once `calibration_draw` (Terminal 2) has started and subscribed to it, so wait until you see the calibration node's descent logs (`"¡Iniciando calibracion!"` / repeated position output) before publishing:
 ```bash
 ros2 topic pub /force_torque_sensor_broadcaster/wrench geometry_msgs/msg/WrenchStamped \
 "{wrench: {force: {x: 0.0, y: 0.0, z: -3.5}}}" --once
 ```
+Publishing this too early (before the end-effector begins its descent) will cause the calibration node to record an incorrect Z height.
 
 ## Project structure
 
@@ -156,6 +176,17 @@ ros2 topic pub /force_torque_sensor_broadcaster/wrench geometry_msgs/msg/WrenchS
         └── lab_base_world_classic.sdf
 
 ```
+
+## Troubleshooting
+
+**`ModuleNotFoundError: No module named 'skimage'` after `pip3 install skimage`**
+The PyPI package is named `scikit-image`, not `skimage` (the latter is an unrelated placeholder package that intentionally fails to install). Run `pip3 install --user scikit-image` instead.
+
+**colcon warning: `AMENT_PREFIX_PATH ... doesn't exist`**
+Harmless in most cases — it means a stale package path (e.g. from a deleted `install/` directory) is still cached in your shell environment. Open a fresh terminal, or `unset AMENT_PREFIX_PATH CMAKE_PREFIX_PATH` and re-source `/opt/ros/humble/setup.bash` followed by this workspace's `install/setup.bash`.
+
+**Calibration never finishes / robot descends indefinitely in simulation**
+Expected — see the Terminal 3 step above. `calibration_draw` only stops descending once it receives a `WrenchStamped` message with `force.z < -3` on `/force_torque_sensor_broadcaster/wrench`, and nothing in this simulation setup publishes that automatically.
 
 ## Features and roadmap
 
