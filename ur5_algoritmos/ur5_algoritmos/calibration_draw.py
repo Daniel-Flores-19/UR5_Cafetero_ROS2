@@ -81,7 +81,7 @@ class UR5CalibrationDraw(Node):
         self.stop = 0
         self.x_deseado = 0
         self.t = 0
-        self.archivo = open('z_calibrado.txt', 'w')
+        self.archivo = open('~/z_calibrado.txt', 'w')
         self.calib_published = False
 
 

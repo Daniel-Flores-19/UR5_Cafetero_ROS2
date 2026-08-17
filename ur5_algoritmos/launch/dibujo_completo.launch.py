@@ -73,5 +73,6 @@ def generate_launch_description():
 
     return LaunchDescription([
         nodo_calibracion,
-        orquestador_dibujo
+        orquestador_dibujo,
+
     ])
