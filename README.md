@@ -56,6 +56,21 @@ colcon build
 source install/setup.bash
 ```
 
+Finally, you need to run two launch files in two different terminals:
+```bash
+ros2 launch ur_simulation_gazebo ur_sim_control.launch.py
+```
+
+And:
+```bash
+ros2 launch ur5_algoritmos dibujo_completo.launch.py
+```
+
+Also, becuase this urdf does not has a force sensor, you have to simulate the feedback of one publishing a message on the force sensor topic:
+```bash
+ros2 topic pub /force_torque_sensor_broadcaster/wrench geometry_msgs/msg/WrenchStamped \
+"{wrench: {force: {x: 0.0, y: 0.0, z: -3.5}}}" --once
+```
 
 ## Project structure
 
