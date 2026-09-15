@@ -5,21 +5,21 @@ def generate_launch_description():
 
     image_node = Node(
         package = "ur5_algoritmos",
-        executable = "imagen_trajectory_new",
+        executable = "imagen_trajectory",
         name = "imagen_trajectory_publisher",
         output = "screen",
     )
 
     robot_node = Node(
         package = "ur5_algoritmos",
-        executable = "move_draw_new",
+        executable = "move_draw_sub",
         name = "ur5_kinecontrol_node",
         output = "screen",
     )
 
     text_node = Node(
         package = "ur5_algoritmos",
-        executable = "array_new_v8",
+        executable = "letter_trajectory",
         name = "letter_trajectory_publisher",
         output = "screen",
     )

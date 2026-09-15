@@ -9,6 +9,7 @@ at PUBLISH_HZ so late-joining subscribers don't miss it.
     /letter_trajectory/flags   (Int8MultiArray)      [1,0,0,...,1,0,0,...]
                                                        ^ new segment
 """
+import os
 import cv2
 import numpy as np
 import rclpy
@@ -16,7 +17,7 @@ from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray, Int8MultiArray, MultiArrayDimension
 import matplotlib.pyplot as plt
 
-from ur5_algoritmos.letter_trajectory_functions_img import (
+from ur5_algoritmos.trayectorias.imagen_functions import (
     analyze_skeleton_points,
     merge_segments_human_writing_order,
     plot_letter_pil,
@@ -33,12 +34,17 @@ from ur5_algoritmos.letter_trajectory_functions_img import (
 # Parámetros
 # ===========================================================================
 
+
 FONTS = {
     "1": (
         "Playwrite CU",
-        "/home/utec/ros2_ws/src/ur5_algoritmos/ur5_algoritmos/Playwrite_CU/PlaywriteCU-VariableFont_wght.ttf",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                     "Tipografia", "Playwrite_CU", "PlaywriteCU-VariableFont_wght.ttf"),
     ),
 }
+
+
+
 
 LETTER   = "Kai'sa"
 FONT_KEY = "1"
@@ -53,9 +59,73 @@ SPLINE_SMOOTHING = 1.5
 SPLINE_NUM_PTS   = 70
 
 
-DRAW_CENTER = np.array([-0.759, -0.085])
-DRAW_WIDTH  = 0.25
-DRAW_HEIGHT = 0.25
+# ---------------------------------------------------------------------------
+# Hoja de papel
+#
+# A4 en VERTICAL sobre la mesa: el lado corto (210 mm) va sobre X del robot y
+# el largo (297 mm) sobre Y. Con 20 mm de margen el área de dibujo es
+# 170 x 257 mm, que es EXACTAMENTE la zona que palpa calibration_surface_A4_3x3
+# con sus valores por defecto, así que el modelo de la mesa nunca extrapola.
+#
+# El centro y el área salen del .npz de la calibración (ver area_calibrada más
+# abajo); los valores de aquí son solo el respaldo previo a calibrar.
+# ---------------------------------------------------------------------------
+PAPER_X      = 0.210   # [m] lado de la A4 sobre X del robot
+PAPER_Y      = 0.297   # [m] lado de la A4 sobre Y del robot
+PAPER_MARGIN = 0.020   # [m] margen libre en cada borde
+
+# Respaldo si todavía no se ha calibrado nunca. En cuanto existe el .npz manda
+# la calibración: es la única fuente de verdad sobre dónde está la hoja.
+DRAW_CENTER = np.array([-0.5824, 0.0653])
+DRAW_WIDTH  = PAPER_X - 2 * PAPER_MARGIN   # 0.170 m
+DRAW_HEIGHT = PAPER_Y - 2 * PAPER_MARGIN   # 0.257 m
+
+SUPERFICIE_NPZ = '~/pintorV2_ws/calibracion/surface_calibration_A4.npz'
+
+
+def area_calibrada(ruta=SUPERFICIE_NPZ):
+    """Área de dibujo tal como la dejó la calibración de superficie.
+
+    El .npz guarda el centro palpado, el tamaño de hoja y el margen, así que el
+    área sale de ahí en vez de estar copiada a mano en este archivo: si la hoja
+    se mueve, basta con recalibrar y el dibujo la sigue. Devolver exactamente la
+    zona palpada es además lo que garantiza que el modelo z(x, y) no extrapole.
+
+    Devuelve (centro, ancho, alto) o None si no hay calibración utilizable.
+    """
+    ruta_abs = os.path.expanduser(ruta)
+
+    if not os.path.exists(ruta_abs):
+        return None
+
+    try:
+        datos = np.load(ruta_abs)
+        centro = np.asarray(datos['centro'], dtype=float)
+        paper = np.asarray(datos['paper'], dtype=float)
+        margen = float(datos['edge_margin'])
+    except (OSError, KeyError, ValueError):
+        return None
+
+    return centro, float(paper[0]) - 2 * margen, float(paper[1]) - 2 * margen
+
+
+_area = area_calibrada()
+
+if _area is not None:
+    DRAW_CENTER, DRAW_WIDTH, DRAW_HEIGHT = _area
+    print(f"[imagen_trajectory] Área de dibujo desde la calibración: "
+          f"centro=({DRAW_CENTER[0]:.4f}, {DRAW_CENTER[1]:.4f}) "
+          f"{DRAW_WIDTH*1000:.0f}x{DRAW_HEIGHT*1000:.0f} mm")
+else:
+    print(f"[imagen_trajectory] Sin calibración en {SUPERFICIE_NPZ}: "
+          f"usando el área por defecto "
+          f"centro=({DRAW_CENTER[0]:.4f}, {DRAW_CENTER[1]:.4f}). "
+          f"Corre calibration_surface_A4_3x3 antes de dibujar.")
+
+# Gira el dibujo 90° sobre la hoja: el ancho de la imagen pasa a recorrer el
+# lado LARGO del papel. Con imágenes apaisadas permite dibujarlas mucho más
+# grandes sobre una A4 vertical.
+DRAW_ROTATE_90 = True
 
 PUBLISH_REPEATS = 10     # how many times to send both arrays
 PUBLISH_HZ      = 1.0   # rate between repetitions
@@ -66,11 +136,38 @@ PUBLISH_HZ      = 1.0   # rate between repetitions
 # ===========================================================================
 
 def pixel_to_robot_xy(px, py, img_size):
-    nx =  (px / img_size[1]) - 0.5
-    ny = -((py / img_size[0]) - 0.5)
+    """
+    Píxel de la imagen -> XY del robot sobre la hoja.
+
+    La escala es la MISMA en los dos ejes, la mayor que deja la imagen entera
+    dentro del área de dibujo: así el trazo conserva su forma. Antes se
+    normalizaba cada eje por separado, lo que estiraba el dibujo hasta llenar
+    el rectángulo sin importar la forma de la imagen.
+
+    Con DRAW_ROTATE_90 el dibujo se gira un cuarto de vuelta: el ancho de la
+    imagen recorre el lado largo de la hoja y el alto el corto. Es un giro, no
+    un espejo, así que el dibujo no sale invertido.
+
+    La imagen queda centrada en DRAW_CENTER.
+    """
+    alto, ancho = img_size[0], img_size[1]
+
+    u = px - ancho / 2.0     # +u = hacia la derecha de la imagen
+    v = py - alto / 2.0      # +v = hacia abajo de la imagen
+
+    if DRAW_ROTATE_90:
+        # El alto de la imagen cae sobre X del robot y el ancho sobre Y.
+        escala = min(DRAW_WIDTH / alto, DRAW_HEIGHT / ancho)
+        return np.array([
+            DRAW_CENTER[0] + v * escala,
+            DRAW_CENTER[1] + u * escala,
+        ])
+
+    escala = min(DRAW_WIDTH / ancho, DRAW_HEIGHT / alto)   # [m] por píxel
+
     return np.array([
-        DRAW_CENTER[0] + nx * DRAW_WIDTH,
-        DRAW_CENTER[1] + ny * DRAW_HEIGHT,
+        DRAW_CENTER[0] + u * escala,
+        DRAW_CENTER[1] - v * escala,
     ])
 
 
@@ -134,7 +231,7 @@ class LetterTrajectoryPublisher(Node):
         self.get_logger().info(f"Texto: '{LETTER}' | Fuente: {font_name}")
 
         # Processing an image
-        image = cv2.imread('/home/utec/Downloads/vp.jpeg')
+        image = cv2.imread('/home/mito/Downloads/kirby.png')    
         img_resized = ur5_resize_paper(image)
         img_canny = auto_canny_limits(img_resized)
         
@@ -145,7 +242,11 @@ class LetterTrajectoryPublisher(Node):
             density_threshold=0.1,
             suppression_mode="thin",
             )
-        _, _, skeleton, _ = process_image(img_canny)
+        # Se esqueletiza la versión filtrada por densidad. Con los parámetros
+        # actuales sale igual que img_canny (Canny ya da bordes de 1 px y el
+        # modo "thin" no tiene nada que adelgazar), pero así afinar el filtro
+        # surte efecto sin tener que tocar esta línea.
+        _, _, skeleton, _ = process_image(img_canny_f)
         if skeleton is None:
             self.get_logger().error("Sin esqueleto")
             return []

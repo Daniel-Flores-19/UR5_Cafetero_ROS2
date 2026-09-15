@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import rclpy
 import csv
+import os
 from rclpy.node import Node
 import numpy as np
 from rclpy.action import ActionClient
@@ -16,11 +17,9 @@ import time
 from rclpy.executors import MultiThreadedExecutor
 from std_msgs.msg import Float32MultiArray, Int8MultiArray, MultiArrayDimension
 
-from ur5_algoritmos.fk_functions import *
-from ur5_algoritmos.ik_functions import *
-from ur5_algoritmos.kine_control_functions import *
-from ur5_algoritmos.QP_functions import *
-from ur5_algoritmos.markers import *
+from ur5_algoritmos.cinematica import *
+from ur5_algoritmos.utils.markers import *
+from ur5_algoritmos.calibration_surface_A4_3x3 import SuperficieZ
 
 
 # Estados de la máquina de fases
@@ -53,7 +52,7 @@ class UR5ControlNode(Node):
 
         self.action_client = ActionClient(
             self, FollowJointTrajectory,
-            '/joint_trajectory_controller/follow_joint_trajectory',
+            '/scaled_joint_trajectory_controller/follow_joint_trajectory',
             callback_group=self.client_group)
 
         self.switch_ctrl_client = self.create_client(
@@ -83,6 +82,23 @@ class UR5ControlNode(Node):
         # Declarar el parámetro con un valor por defecto (por si acaso)
         self.declare_parameter('dist_z', 0.16745639390207478)
         
+        # Mapa de la mesa medido por calibration_surface_A4_3x3. Si existe, cada
+        # punto del dibujo usa la Z de la superficie en su propio XY en vez de
+        # una única altura para toda la hoja: así el plumón no queda apretado en
+        # las zonas altas ni levantado en las bajas.
+        self.declare_parameter('superficie_npz', '~/pintorV2_ws/calibracion/surface_calibration_A4.npz')
+        self.declare_parameter('usar_superficie', True)
+        
+        # Altura a la que se levanta el plumón entre trazos, medida DESDE el
+        # papel. NaN conserva el comportamiento anterior (dist_z * 1.06).
+        self.declare_parameter('lift_height', float('nan'))
+
+        # Al terminar, volver a la postura desde la que arrancó el nodo (el
+        # centro de la hoja, si se colocó ahí antes de lanzarlo) en vez de a la
+        # postura fija de siempre. Así se puede encadenar otro dibujo sin
+        # recolocar el robot a mano.
+        self.declare_parameter('volver_al_inicio', True)
+        
         # Leer el parámetro que le envió el archivo Launch
         self.dist_z = self.get_parameter('dist_z').get_parameter_value().double_value
         
@@ -91,6 +107,7 @@ class UR5ControlNode(Node):
         
         # ===== Estado =====
         self.q       = None          
+        self.q_inicio = None         # postura de arranque, para volver al final
         self.phase   = PHASE_INIT
 
         # ===== Marker =====
@@ -98,16 +115,46 @@ class UR5ControlNode(Node):
             frame="base_link_inertia", ns="ee", marker_id=0,
             scale=0.05, color=(0.0, 0.0, 1.0, 1.0))
 
-        self.archivo = open('posiciones_robot.txt', 'w')
+        # Junto a los datos de calibración, y no en el cwd desde el que se lanzó
+        # el nodo: así el log siempre aparece en el mismo sitio.
+        ruta_log = os.path.expanduser(
+            '~/pintorV2_ws/calibracion/posiciones_robot.txt')
+        os.makedirs(os.path.dirname(ruta_log), exist_ok=True)
+        self.archivo = open(ruta_log, 'w')
         self.archivo.write('timestamp,x,y,z\n')
 
         self.t  = 0.0
         self.temp = 1
         
         # Distancia del efector a la mesa -------------
-        self.dist_z = self.dist_z + 0.0016
+        # Dos correcciones sobre la Z calibrada:
+        #  +1.6 mm : el contacto se detecta con el plumón ya comprimido, así que
+        #            la Z calibrada queda algo por debajo del papel.
+        #  -8.0 mm : la calibración se hace con la TAPA puesta para no maltratar
+        #            la punta. La tapa sobresale más que la punta, así que sin
+        #            ella el plumón queda corto y hay que bajar otro tanto.
+        # Medido en el robot: con solo el +1.6 mm el plumón pintaba en el aire;
+        # con -6.0 mm todavía no marcaba, así que se subió a -8.0 mm.
+        self.declare_parameter('offset_tapa', -0.008)
+        self.offset_tapa = self.get_parameter(
+            'offset_tapa').get_parameter_value().double_value
+
+        self.z_offset = 0.0016 + self.offset_tapa
+        self.dist_z = self.dist_z + self.z_offset
+
+        self.get_logger().info(
+            f"Offset de Z: {self.z_offset*1000:+.1f} mm "
+            f"(contacto +1.6, tapa {self.offset_tapa*1000:+.1f})")
         
         self.dist_z_up = self.dist_z * 1.06
+        
+        # ===== Superficie de la mesa =====
+        self.superficie = self.cargar_superficie()
+        
+        lift = self.get_parameter('lift_height').get_parameter_value().double_value
+        self.lift_height = (self.dist_z_up - self.dist_z) if np.isnan(lift) else lift
+        self.get_logger().info(
+            f"Levantamiento entre trazos: {self.lift_height*1000:.1f} mm sobre el papel")
         
         
         self.cont = 0
@@ -123,6 +170,46 @@ class UR5ControlNode(Node):
         self.get_logger().info("Nodo iniciado. Esperando joint_states y puntos de dibujo ...")
 
     # =========================
+    # Altura del papel
+    # =========================
+    def cargar_superficie(self):
+        """Carga el mapa de la mesa; devuelve None si no hay o no se puede leer."""
+        if not self.get_parameter('usar_superficie').get_parameter_value().bool_value:
+            self.get_logger().info("usar_superficie=False: Z plana en toda la hoja.")
+            return None
+
+        ruta = os.path.expanduser(
+            self.get_parameter('superficie_npz').get_parameter_value().string_value)
+
+        if not os.path.exists(ruta):
+            self.get_logger().warn(
+                f"No existe {ruta}: se dibuja con Z plana ({self.dist_z:.4f} m). "
+                "Corre calibration_surface_A4_3x3 para medir la mesa.")
+            return None
+
+        try:
+            superficie = SuperficieZ.cargar(ruta)
+        except Exception as e:
+            self.get_logger().error(
+                f"No se pudo leer {ruta} ({e}): se dibuja con Z plana.")
+            return None
+
+        self.get_logger().info(f"Superficie de la mesa cargada de {ruta}: {superficie}")
+        return superficie
+
+    def z_papel(self, x, y):
+        """Z a la que el plumón toca el papel en (x, y)."""
+        if self.superficie is None:
+            return self.dist_z
+        return float(self.superficie.z(x, y)) + self.z_offset
+
+    def z_arriba(self, x, y):
+        """Z de tránsito: la misma altura sobre el papel en cualquier punto."""
+        if self.superficie is None:
+            return self.dist_z_up
+        return self.z_papel(x, y) + self.lift_height
+
+    # =========================
     # Callback joint_states
     # =========================
     def joint_state_cb(self, msg: JointState):
@@ -136,6 +223,9 @@ class UR5ControlNode(Node):
             ])
             #print(msg.position)
             #print(self.q)
+            # self.q la va mutando el lazo de control, así que la postura de
+            # arranque se guarda aparte para poder volver a ella al final.
+            self.q_inicio = self.q.copy()
             self.get_logger().info(f"Posición real leída: {np.round(self.q, 3)}")
             self.phase = 6 #PHASE_GOTO_START   # arrancar fase 1
         except ValueError:
@@ -152,10 +242,17 @@ class UR5ControlNode(Node):
 
             x = data[i]
             y = data[i+1]
-            z = self.dist_z
+            z = self.z_papel(x, y)
             self.points.append([x, y, z, 0, 0.70 , 0.70, 0])
 
         self.points_received = True
+
+        if self.superficie is not None:
+            zs = [p[2] for p in self.points]
+            self.get_logger().info(
+                f"{len(self.points)} puntos: Z entre {min(zs)*1000:.2f} y "
+                f"{max(zs)*1000:.2f} mm (recorrido {(max(zs)-min(zs))*1000:.2f} mm "
+                "siguiendo la mesa)")
         
         
     def flag_callback(self, msg):
@@ -310,7 +407,7 @@ class UR5ControlNode(Node):
             # ── FASE 2: cambiar a forward_position_controller ─────
             self.switch_my_controllers(
                 to_activate   = 'forward_position_controller',
-                to_deactivate = 'joint_trajectory_controller'
+                to_deactivate = 'scaled_joint_trajectory_controller'
             )
             self.phase = PHASE_DRAW
             print(self.phase)
@@ -400,7 +497,7 @@ class UR5ControlNode(Node):
             if self.up_subphase == 0:
                 # Destino: Mismas coordenadas X e Y previas, pero con Z segura (0.195)
                 xd = self.points[max(0, self.punto_goal - 1)].copy()
-                xd[2] = self.dist_z_up
+                xd[2] = self.z_arriba(xd[0], xd[1])
         
                 # Ejecutar UN paso matemático de QP hacia esa posición aérea
                 dq = compute_dq_qp(
@@ -420,7 +517,7 @@ class UR5ControlNode(Node):
             elif self.up_subphase == 1:
             # Destino: Nuevas coordenadas X e Y del siguiente trazo, manteniendo Z segura
                 xd = self.points[self.punto_goal].copy()
-                xd[2] = self.dist_z_up
+                xd[2] = self.z_arriba(xd[0], xd[1])
         
                 dq = compute_dq_qp(
                 fkine=fkine_ur5, jacobian_func=numerical_jacobian, TF2xyzquat=TF2xyzquat,
@@ -461,10 +558,21 @@ class UR5ControlNode(Node):
             self.position_pub.publish(msg)
             
         if self.phase == PHASE_FINISH:
-            q_start = np.array([np.pi, -2.14, -1.34, -1.23, np.pi/2, 0.0])
-            print("Fase Final")
+            q_fija = np.array([np.pi, -2.14, -1.34, -1.23, np.pi/2, 0.0])
+
+            volver = self.get_parameter(
+                'volver_al_inicio').get_parameter_value().bool_value
+
+            if volver and self.q_inicio is not None:
+                q_start = self.q_inicio
+                destino = 'postura de inicio (centro de la hoja)'
+            else:
+                q_start = q_fija
+                destino = 'postura fija'
+
+            self.get_logger().info(f"Dibujo terminado. Volviendo a la {destino}.")
             self.switch_my_controllers(
-                to_activate   = 'joint_trajectory_controller',
+                to_activate   = 'scaled_joint_trajectory_controller',
                 to_deactivate = 'forward_position_controller'
             )
             

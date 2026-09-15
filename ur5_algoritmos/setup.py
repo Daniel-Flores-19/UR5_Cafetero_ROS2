@@ -9,6 +9,18 @@ setup(
     version='0.0.0',
     packages=find_packages(exclude=['test']),
 
+    # La tipografía viaja con el paquete: los nodos la buscan junto al módulo.
+    # Las familias se reparten en varios niveles (Playwrite_CU/static/*.ttf,
+    # UTEC/Stag/Stag Sans/*.otf), así que se cubre cada profundidad y tanto
+    # .ttf como .otf: el pipeline rasteriza con FreeType y acepta los dos.
+    package_data={
+        package_name: [
+            f'Tipografia/{"*/" * depth}*{ext}'
+            for depth in range(5)
+            for ext in ('.ttf', '.otf', '.txt')
+        ],
+    },
+
     data_files=[
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
@@ -18,8 +30,6 @@ setup(
         (os.path.join('share', package_name, 'launch'),
             glob('launch/*.launch.py')),
 
-        (os.path.join('share', package_name, 'urdf'),
-            glob('urdf/*.xacro')),
     ],
 
     install_requires=['setuptools'],
@@ -38,24 +48,11 @@ setup(
 
     entry_points={
         'console_scripts': [
-            'fk_ur5 = ur5_algoritmos.fk_ur5:main',
-            'fk_ur5_gazebo = ur5_algoritmos.fk_ur5_gazebo:main',
-            'ik_ur5 = ur5_algoritmos.ik_ur5:main',
-            'kine_control_ur5 = ur5_algoritmos.kine_control_ur5:main',
-            'QP_ur5 = ur5_algoritmos.QP_ur5:main',
-            'p_test_llm_track = ur5_algoritmos.p_test_llm_track:main',
-            'p_test_llm_track_gazebo = ur5_algoritmos.p_test_llm_track_gazebo:main',
-            'move_draw = ur5_algoritmos.move_draw:main',
+            'calibration_draw = ur5_algoritmos.calibration_draw:main',
+            'calibration_surface_A4_3x3 = ur5_algoritmos.calibration_surface_A4_3x3:main',
             'move_draw_sub = ur5_algoritmos.move_draw_sub:main',
-            'letter_trajectory_arrays =  ur5_algoritmos.letter_trajectory_arrays:main',
-            'letter_trajectory_arrays_nuevo =  ur5_algoritmos.letter_trajectory_arrays_nuevo:main',
-            'calibration_draw =  ur5_algoritmos.calibration_draw:main',
-            'imagen_trajectory =  ur5_algoritmos.imagen_trajectory:main',
-            'array_new_v7 =  ur5_algoritmos.array_new_v7:main',
-            'array_new_v8 =  ur5_algoritmos.array_new_v8:main',
-            'imagen_trajectory_new =  ur5_algoritmos.imagen_trajectory_new:main',
-            'move_draw_new = ur5_algoritmos.move_draw_new:main',
-            
+            'imagen_trajectory = ur5_algoritmos.imagen_trajectory:main',
+            'letter_trajectory = ur5_algoritmos.letter_trajectory:main',
         ],
     },
 )

@@ -1,4 +1,4 @@
-from ur5_algoritmos.fk_functions import *
+from ur5_algoritmos.cinematica.fk_functions import *
 
 # =========================
 # CUATERNIONES

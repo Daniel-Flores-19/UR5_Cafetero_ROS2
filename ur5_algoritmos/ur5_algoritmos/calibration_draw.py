@@ -15,11 +15,8 @@ import time
 import os
 from rclpy.executors import MultiThreadedExecutor
 
-from ur5_algoritmos.fk_functions import *
-from ur5_algoritmos.ik_functions import *
-from ur5_algoritmos.kine_control_functions import *
-from ur5_algoritmos.QP_functions import *
-from ur5_algoritmos.markers import *
+from ur5_algoritmos.cinematica import *
+from ur5_algoritmos.utils.markers import *
 
 
 # Estados de la máquina de fases
@@ -36,6 +33,18 @@ class UR5CalibrationDraw(Node):
         super().__init__('ur5_calibration_draw')
 
         # ===== PARAMETROS =====
+        # Con True el nodo NO va a la postura fija: palpa justo donde está el
+        # robot y al terminar vuelve a subir por el mismo sitio. Útil para
+        # calibrar un punto concreto colocando el brazo a mano.
+        self.declare_parameter('usar_posicion_actual', False)
+        # Tope de descenso por si el sensor de fuerza no llegara a dispararse.
+        self.declare_parameter('max_descenso', 0.150)
+
+        self.usar_posicion_actual = self.get_parameter(
+            'usar_posicion_actual').get_parameter_value().bool_value
+        self.max_descenso = self.get_parameter(
+            'max_descenso').get_parameter_value().double_value
+
         self.dt   = 1.0 / 50.0
         self.K    = 2.5
         self.lamb = 0.01
@@ -52,7 +61,7 @@ class UR5CalibrationDraw(Node):
 
         self.action_client = ActionClient(
             self, FollowJointTrajectory,
-            '/joint_trajectory_controller/follow_joint_trajectory',
+            '/scaled_joint_trajectory_controller/follow_joint_trajectory',
             callback_group=self.client_group)
 
         self.switch_ctrl_client = self.create_client(
@@ -81,8 +90,13 @@ class UR5CalibrationDraw(Node):
         self.stop = 0
         self.x_deseado = 0
         self.t = 0
-        self.archivo = open('~/z_calibrado.txt', 'w')
+        # Solo la ruta: el archivo se escribe al terminar la calibración, para no
+        # borrar el valor anterior si esta corrida no llega a completarse.
+        self.ruta_calibracion = os.path.expanduser('~/pintorV2_ws/calibracion/z_calibrado.txt')
+        os.makedirs(os.path.dirname(self.ruta_calibracion), exist_ok=True)
         self.calib_published = False
+        self.q_inicial = None      # a dónde volver si se calibra en el sitio
+        self.z_inicial = None      # para medir cuánto se ha bajado
 
 
         # ===== Timer principal =====
@@ -143,9 +157,16 @@ class UR5CalibrationDraw(Node):
     # =========================
     def go_to_start(self):
         """Calcula el q inicial del círculo y mueve allí con scaled."""
+        if self.usar_posicion_actual:
+            _, x_aqui = self.compute_fk(self.q)
+            self.get_logger().info(
+                f"Calibrando SIN desplazarse, desde X={x_aqui[0]:.4f} "
+                f"Y={x_aqui[1]:.4f} Z={x_aqui[2]:.4f}")
+            return True
+
         # Punto cartesiano inicial del círculo (t=0)
         self.switch_my_controllers(
-                to_activate   = 'joint_trajectory_controller', 
+                to_activate   = 'scaled_joint_trajectory_controller', 
                 to_deactivate = 'forward_position_controller'
             )
             
@@ -228,11 +249,13 @@ class UR5CalibrationDraw(Node):
             # ── FASE 2: cambiar a forward_position_controller ─────
             self.switch_my_controllers(
                 to_activate   = 'forward_position_controller',
-                to_deactivate = 'joint_trajectory_controller'
+                to_deactivate = 'scaled_joint_trajectory_controller'
             )
             
             #Posicion Inicial efector final
             _, x_initial = self.compute_fk(self.q)
+            self.q_inicial = self.q.copy()
+            self.z_inicial = float(x_initial[2])
             
             self.x_deseado = x_initial.copy()
             self.x_deseado[2] = x_initial[2] - 0.005
@@ -280,6 +303,16 @@ class UR5CalibrationDraw(Node):
             
             error = np.linalg.norm(pose_error(self.x_deseado, x))
             print("bajando")
+
+            # Red de seguridad: sin esto, un sensor que no dispara deja al robot
+            # bajando indefinidamente.
+            if self.z_inicial - x[2] > self.max_descenso:
+                self.get_logger().error(
+                    f"Bajó {self.max_descenso*1000:.0f} mm sin detectar contacto. "
+                    "Abortando sin guardar.")
+                self.stop = 1
+                self.phase = FINAL
+                return
             # 7. Evaluar error y salto de dibujo
             if np.linalg.norm(error) < 0.001:
                 print(self.fuerza_z)
@@ -299,17 +332,31 @@ class UR5CalibrationDraw(Node):
             msg.data = z_draw
             self.calib_ok_pub.publish(msg)
             
-            self.archivo.write(str(z_draw))
-           
+            # Con 'with' el dato queda en disco al salir del bloque: el launch lo
+            # lee apenas termina este proceso y no puede quedarse en el buffer.
+            try:
+                with open(self.ruta_calibracion, 'w') as archivo:
+                    archivo.write(str(z_draw))
+            except OSError as error:
+                self.get_logger().error(
+                    f"No se pudo guardar la calibración en {self.ruta_calibracion}: {error}")
+
             # Ahora sí cierras el nodo con seguridad
-            self.get_logger().info(f"Calibración guardada ({z_draw} m). Cerrando...")
+            self.get_logger().info(
+                f"Calibración guardada en {self.ruta_calibracion} ({z_draw} m). Cerrando...")
             
             self.switch_my_controllers(
-                to_activate   = 'joint_trajectory_controller', 
+                to_activate   = 'scaled_joint_trajectory_controller', 
                 to_deactivate = 'forward_position_controller'
             )
             
-            q_start = np.array([np.pi, -2.14, -1.34, -1.23, np.pi/2, 0.0])
+            if self.usar_posicion_actual:
+                # Subir por donde bajó y quedarse ahí.
+                q_start = self.q_inicial
+                self.get_logger().info("Volviendo a la posición de partida.")
+            else:
+                q_start = np.array([np.pi, -2.14, -1.34, -1.23, np.pi/2, 0.0])
+
             # Enviar con scaled (bloqueante)
             self.send_trajectory_goal(q_start, duration_sec=3.0)
             self.calib_published = True
@@ -335,7 +382,6 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        #node.archivo.close()
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

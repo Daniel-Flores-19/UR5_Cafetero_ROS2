@@ -3,12 +3,35 @@
 <package format="3">
   <name>ur5_algoritmos</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>Control del UR5 con algoritmos propios: cinemática (FK/IK/QP) y
+    generación de trayectorias de dibujo a partir de texto e imágenes.</description>
   <maintainer email="molortegui@utec.edu.pe">utec</maintainer>
-  <license>TODO: License declaration</license>
+  <license>Apache License 2.0</license>
 
+  <!-- ROS -->
   <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>trajectory_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>control_msgs</depend>
+  <depend>controller_manager_msgs</depend>
+
+  <!-- Lanzamiento -->
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ros2launch</exec_depend>
+
+  <!-- Python -->
   <depend>python3-numpy</depend>
+  <depend>python3-scipy</depend>
+  <depend>python3-opencv</depend>
+  <depend>python3-skimage</depend>
+  <depend>python3-pil</depend>
+  <depend>python3-matplotlib</depend>
+  <!-- osqp no tiene regla en rosdep; se instala con pip:
+       pip3 install osqp==0.6.7.post3       (con la opcion de usuario si no hay venv) -->
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

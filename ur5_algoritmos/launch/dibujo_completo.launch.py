@@ -6,7 +6,7 @@ from launch.event_handlers import OnProcessExit
 
 def lanzar_nodo_dibujo(context, *args, **kwargs):
     # Definimos la ruta donde el nodo de calibración guardó el dato
-    ruta_archivo = os.path.expanduser('~/z_calibrado.txt')
+    ruta_archivo = os.path.expanduser('~/pintorV2_ws/calibracion/z_calibrado.txt')
     
     # Valor por defecto por si ocurre algún fallo de lectura
     z_final = 0.1930
@@ -33,8 +33,8 @@ def lanzar_nodo_dibujo(context, *args, **kwargs):
     # 3. Nuevo Nodo: Generador de puntos de la Imagen
     nodo_imagen_trajectory = Node(
         package='ur5_algoritmos',  # Asegúrate de que este sea el paquete correcto
-        executable='imagen_trajectory_new',
-        name='imagen_trajectory_new',
+        executable='imagen_trajectory',
+        name='imagen_trajectory',
         output='screen',
         emulate_tty=True
     )

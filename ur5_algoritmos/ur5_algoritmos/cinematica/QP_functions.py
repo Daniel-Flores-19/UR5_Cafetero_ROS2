@@ -1,9 +1,9 @@
 import numpy as np
 import osqp
 import scipy.sparse as sp
-from ur5_algoritmos.fk_functions import *
-from ur5_algoritmos.ik_functions import *
-from ur5_algoritmos.kine_control_functions import *
+from ur5_algoritmos.cinematica.fk_functions import *
+from ur5_algoritmos.cinematica.ik_functions import *
+from ur5_algoritmos.cinematica.kine_control_functions import *
 
 def compute_dq_qp(fkine, jacobian_func, TF2xyzquat, q, xd,
                   K=1.5, lamb=0.01, dt=0.02):
@@ -75,7 +75,7 @@ def compute_dq_qp(fkine, jacobian_func, TF2xyzquat, q, xd,
     # =========================
     # OSQP
     # =========================
-    A = sp.eye(n)
+    A = sp.eye(n, format='csc')   # csc: formato que espera OSQP, evita su conversión interna
     l = dq_min_final
     u = dq_max_final
 

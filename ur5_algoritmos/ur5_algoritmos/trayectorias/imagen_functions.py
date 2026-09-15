@@ -177,20 +177,24 @@ def filter_canny_by_density(
         raise ValueError(f"Unknown suppression_mode: '{suppression_mode}'")
 
 
-def ur5_resize_paper(image):
-    max_height = 800
-    max_width = 800
+def ur5_resize_paper(image, max_side: int = 640):
+    """
+    Reduce la imagen para que su lado mayor no pase de max_side, SIN deformarla.
 
-    img_height = image.shape[0]
-    img_width = image.shape[1]
+    Antes se redimensionaba a 640x640 fijos, así que cualquier imagen que no
+    fuese cuadrada se estiraba: el esqueleto salía deformado y el robot lo
+    dibujaba deformado. Ahora se conserva la relación de aspecto y las imágenes
+    que ya caben se devuelven intactas.
+    """
+    alto, ancho = image.shape[:2]
 
-    if (img_height > 0.8*max_height) or (img_width > 0.8 * max_width):
-        target_size = [int(max_width * 0.8), int(max_height * 0.8)]
-        resized_img = cv2.resize(image, target_size, interpolation=cv2.INTER_CUBIC)
-        return resized_img
+    escala = min(max_side / ancho, max_side / alto, 1.0)
 
-    else:
+    if escala >= 1.0:
         return image
+
+    nuevo_tam = (int(round(ancho * escala)), int(round(alto * escala)))
+    return cv2.resize(image, nuevo_tam, interpolation=cv2.INTER_CUBIC)
 
 def process_image(file_path):
     """
