@@ -17,7 +17,7 @@ from rclpy.node import Node
 from std_msgs.msg import Float32MultiArray, Int8MultiArray, MultiArrayDimension
 import matplotlib.pyplot as plt
 
-from ur5_algoritmos.trayectorias.imagen_functions import (
+from ur5_algoritmos.trayectorias.img_trajectory_functions import (
     analyze_skeleton_points,
     merge_segments_human_writing_order,
     plot_letter_pil,
@@ -64,7 +64,7 @@ SPLINE_NUM_PTS   = 70
 #
 # A4 en VERTICAL sobre la mesa: el lado corto (210 mm) va sobre X del robot y
 # el largo (297 mm) sobre Y. Con 20 mm de margen el área de dibujo es
-# 170 x 257 mm, que es EXACTAMENTE la zona que palpa calibration_surface_A4_3x3
+# 170 x 257 mm, que es EXACTAMENTE la zona que palpa calibration_surface_A4_4x4
 # con sus valores por defecto, así que el modelo de la mesa nunca extrapola.
 #
 # El centro y el área salen del .npz de la calibración (ver area_calibrada más
@@ -80,7 +80,7 @@ DRAW_CENTER = np.array([-0.5824, 0.0653])
 DRAW_WIDTH  = PAPER_X - 2 * PAPER_MARGIN   # 0.170 m
 DRAW_HEIGHT = PAPER_Y - 2 * PAPER_MARGIN   # 0.257 m
 
-SUPERFICIE_NPZ = '~/pintorV2_ws/calibracion/surface_calibration_A4.npz'
+SUPERFICIE_NPZ = '~/pintor_ws/src/calibracion/surface_calibration_A4.npz'
 
 
 def area_calibrada(ruta=SUPERFICIE_NPZ):
@@ -113,14 +113,14 @@ _area = area_calibrada()
 
 if _area is not None:
     DRAW_CENTER, DRAW_WIDTH, DRAW_HEIGHT = _area
-    print(f"[imagen_trajectory] Área de dibujo desde la calibración: "
+    print(f"[img_trajectory] Área de dibujo desde la calibración: "
           f"centro=({DRAW_CENTER[0]:.4f}, {DRAW_CENTER[1]:.4f}) "
           f"{DRAW_WIDTH*1000:.0f}x{DRAW_HEIGHT*1000:.0f} mm")
 else:
-    print(f"[imagen_trajectory] Sin calibración en {SUPERFICIE_NPZ}: "
+    print(f"[img_trajectory] Sin calibración en {SUPERFICIE_NPZ}: "
           f"usando el área por defecto "
           f"centro=({DRAW_CENTER[0]:.4f}, {DRAW_CENTER[1]:.4f}). "
-          f"Corre calibration_surface_A4_3x3 antes de dibujar.")
+          f"Corre calibration_surface_A4_4x4 antes de dibujar.")
 
 # Gira el dibujo 90° sobre la hoja: el ancho de la imagen pasa a recorrer el
 # lado LARGO del papel. Con imágenes apaisadas permite dibujarlas mucho más

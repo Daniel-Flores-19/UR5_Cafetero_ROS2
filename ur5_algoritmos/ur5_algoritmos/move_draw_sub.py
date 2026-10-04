@@ -19,7 +19,7 @@ from std_msgs.msg import Float32MultiArray, Int8MultiArray, MultiArrayDimension
 
 from ur5_algoritmos.cinematica import *
 from ur5_algoritmos.utils.markers import *
-from ur5_algoritmos.calibration_surface_A4_3x3 import SuperficieZ
+from ur5_algoritmos.calibration_surface_A4_4x4 import SuperficieZ
 
 
 # Estados de la máquina de fases
@@ -82,11 +82,11 @@ class UR5ControlNode(Node):
         # Declarar el parámetro con un valor por defecto (por si acaso)
         self.declare_parameter('dist_z', 0.16745639390207478)
         
-        # Mapa de la mesa medido por calibration_surface_A4_3x3. Si existe, cada
+        # Mapa de la mesa medido por calibration_surface_A4_4x4. Si existe, cada
         # punto del dibujo usa la Z de la superficie en su propio XY en vez de
         # una única altura para toda la hoja: así el plumón no queda apretado en
         # las zonas altas ni levantado en las bajas.
-        self.declare_parameter('superficie_npz', '~/pintorV2_ws/calibracion/surface_calibration_A4.npz')
+        self.declare_parameter('superficie_npz', '~/pintor_ws/src/calibracion/surface_calibration_A4.npz')
         self.declare_parameter('usar_superficie', True)
         
         # Altura a la que se levanta el plumón entre trazos, medida DESDE el
@@ -98,7 +98,13 @@ class UR5ControlNode(Node):
         # postura fija de siempre. Así se puede encadenar otro dibujo sin
         # recolocar el robot a mano.
         self.declare_parameter('volver_al_inicio', True)
-        
+
+        # False -> el traslado al inicio del dibujo parte de la posición actual
+        # del robot. True -> pasa antes por la postura fija de siempre.
+        self.declare_parameter('ir_a_postura_fija', False)
+        self.ir_a_postura_fija = self.get_parameter(
+            'ir_a_postura_fija').get_parameter_value().bool_value
+
         # Leer el parámetro que le envió el archivo Launch
         self.dist_z = self.get_parameter('dist_z').get_parameter_value().double_value
         
@@ -118,7 +124,7 @@ class UR5ControlNode(Node):
         # Junto a los datos de calibración, y no en el cwd desde el que se lanzó
         # el nodo: así el log siempre aparece en el mismo sitio.
         ruta_log = os.path.expanduser(
-            '~/pintorV2_ws/calibracion/posiciones_robot.txt')
+            '~/pintor_ws/src/calibracion/posiciones_robot.txt')
         os.makedirs(os.path.dirname(ruta_log), exist_ok=True)
         self.archivo = open(ruta_log, 'w')
         self.archivo.write('timestamp,x,y,z\n')
@@ -127,24 +133,26 @@ class UR5ControlNode(Node):
         self.temp = 1
         
         # Distancia del efector a la mesa -------------
-        # Dos correcciones sobre la Z calibrada:
-        #  +1.6 mm : el contacto se detecta con el plumón ya comprimido, así que
-        #            la Z calibrada queda algo por debajo del papel.
-        #  -8.0 mm : la calibración se hace con la TAPA puesta para no maltratar
-        #            la punta. La tapa sobresale más que la punta, así que sin
-        #            ella el plumón queda corto y hay que bajar otro tanto.
-        # Medido en el robot: con solo el +1.6 mm el plumón pintaba en el aire;
-        # con -6.0 mm todavía no marcaba, así que se subió a -8.0 mm.
-        self.declare_parameter('offset_tapa', -0.008)
+        # Correcciones sobre la Z calibrada (positivo = hacia arriba):
+        #  offset_contacto : el contacto se detecta con el plumón ya comprimido,
+        #                    así que la Z calibrada queda algo por debajo del
+        #                    papel. +1.0 mm: a la Z calibrada tal cual, y luego
+        #                    con +0.5 mm, el plumón seguía presionando demasiado.
+        #  offset_tapa     : si se calibra con la TAPA puesta, la punta queda
+        #                    más arriba y hay que bajar (antes -8.0 mm).
+        self.declare_parameter('offset_contacto', 0.001)
+        self.declare_parameter('offset_tapa', 0.0)
+        self.offset_contacto = self.get_parameter(
+            'offset_contacto').get_parameter_value().double_value
         self.offset_tapa = self.get_parameter(
             'offset_tapa').get_parameter_value().double_value
 
-        self.z_offset = 0.0016 + self.offset_tapa
+        self.z_offset = self.offset_contacto + self.offset_tapa
         self.dist_z = self.dist_z + self.z_offset
 
         self.get_logger().info(
             f"Offset de Z: {self.z_offset*1000:+.1f} mm "
-            f"(contacto +1.6, tapa {self.offset_tapa*1000:+.1f})")
+            f"(contacto {self.offset_contacto*1000:+.1f}, tapa {self.offset_tapa*1000:+.1f})")
         
         self.dist_z_up = self.dist_z * 1.06
         
@@ -164,6 +172,8 @@ class UR5ControlNode(Node):
         
         
         self.points_received = False
+        self.points = []
+        self.flags = []
 
         # ===== Timer principal =====
         self.timer = self.create_timer(self.dt, self.update, self.timer_group)
@@ -184,7 +194,7 @@ class UR5ControlNode(Node):
         if not os.path.exists(ruta):
             self.get_logger().warn(
                 f"No existe {ruta}: se dibuja con Z plana ({self.dist_z:.4f} m). "
-                "Corre calibration_surface_A4_3x3 para medir la mesa.")
+                "Corre calibration_surface_A4_4x4 para medir la mesa.")
             return None
 
         try:
@@ -235,16 +245,27 @@ class UR5ControlNode(Node):
         
     def xy_callback(self, msg):
 
+        # Los publicadores repiten la trayectoria varias veces. Una vez empezado
+        # el dibujo se ignoran esas repeticiones: este callback corre en otro
+        # hilo (MultiThreadedExecutor) y reconstruir self.points mientras el
+        # lazo de dibujo la recorre le hacía ver una lista vacía o a medias y
+        # dar el dibujo por terminado tras el primer trazo.
+        if self.temp == 0:
+            return
+
         data = msg.data
-        self.points = []
+        # Se construye aparte y se asigna de una vez: el lazo nunca ve una
+        # lista a medio llenar.
+        points = []
 
         for i in range(0, len(data), 2):
 
             x = data[i]
             y = data[i+1]
             z = self.z_papel(x, y)
-            self.points.append([x, y, z, 0, 0.70 , 0.70, 0])
+            points.append([x, y, z, 0, 0.70 , 0.70, 0])
 
+        self.points = points
         self.points_received = True
 
         if self.superficie is not None:
@@ -256,6 +277,9 @@ class UR5ControlNode(Node):
         
         
     def flag_callback(self, msg):
+
+        if self.temp == 0:   # dibujo en curso: mismas razones que xy_callback
+            return
 
         self.flags = list(msg.data)
         self.flags_received = True
@@ -288,14 +312,30 @@ class UR5ControlNode(Node):
         """Calcula el q inicial el dibujo y mueve allí con scaled."""
         # Punto cartesiano inicial del círculo (t=0)
         #xd_start = circular_trajectory(0.0, self.center, self.radius, self.omega)
-        
-        
-        #Posicion Inicial para DIBUJAR
-        q_start = np.array([np.pi, -2.14, -1.34, -1.23, np.pi/2, 0.0])
-        self.send_trajectory_goal(q_start, duration_sec = 5.0)
 
-        xd_start = self.points[0]
-        
+
+        if self.ir_a_postura_fija:
+            # Comportamiento antiguo: pasar antes por una postura fija. Esa
+            # postura está al otro lado de la base (X < 0), así que sólo sirve
+            # si la hoja está ahí.
+            q_start = np.array([np.pi, -2.14, -1.34, -1.23, np.pi/2, 0.0])
+            self.send_trajectory_goal(q_start, duration_sec = 5.0)
+        else:
+            # Partir de donde está el robot: la IK arranca de la postura real y
+            # converge a la rama cercana, sin cruzar el brazo al otro lado.
+            q_start = self.q_inicio.copy()
+            _, x_aqui = self.compute_fk(q_start)
+            self.get_logger().info(
+                f"Partiendo de la posición actual: X={x_aqui[0]:.4f} "
+                f"Y={x_aqui[1]:.4f} Z={x_aqui[2]:.4f}")
+
+        # Llegar SOBRE el primer punto, con el plumón levantado: el lazo de
+        # dibujo baja luego en vertical hasta el papel. Así el traslado
+        # articular no arrastra la punta por la hoja.
+        xd_start = list(self.points[0])
+        xd_start[2] = self.z_arriba(xd_start[0], xd_start[1])
+
+        convergio = False
         #Posicion Inicial del propio Dibujo
         for _ in range(500):   # iterar hasta converger
             dq = compute_dq_qp(
@@ -313,9 +353,18 @@ class UR5ControlNode(Node):
             _, x = self.compute_fk(q_start)
             if np.linalg.norm(pose_error(xd_start, x)) < 0.005:
                 print("posicion inicial de dibujo")
+                convergio = True
                 break
-        
-        
+
+        if not convergio:
+            # Mandar un q que no llega al punto es justo lo que hacía que el
+            # robot se fuera a otro lado: mejor no moverse.
+            self.get_logger().error(
+                f"La IK no llegó al inicio del dibujo X={xd_start[0]:.4f} "
+                f"Y={xd_start[1]:.4f} (error {np.linalg.norm(pose_error(xd_start, x))*1000:.1f} mm). "
+                "No se mueve el robot.")
+            return False
+
         self.get_logger().info(f"Moviendo al inicio del dibujo: {np.round(q_start, 3)}")
 
         # Enviar con scaled (bloqueante)
@@ -384,7 +433,11 @@ class UR5ControlNode(Node):
         #    return
         #print(self.phase)
         
-        if self.points_received == True and self.temp == 1:
+        # Sin q_inicio no se sabe dónde está el robot: esperar a /joint_states.
+        # xy y flags llegan por tópicos distintos: arrancar sólo cuando ambos
+        # corresponden a la misma trayectoria (mismo número de puntos).
+        if (self.points_received == True and self.temp == 1 and self.q_inicio is not None
+                and len(self.flags) == len(self.points)):
             self.phase = PHASE_GOTO_START
             self.temp = 0
         

@@ -5,8 +5,8 @@ def generate_launch_description():
 
     image_node = Node(
         package = "ur5_algoritmos",
-        executable = "imagen_trajectory",
-        name = "imagen_trajectory_publisher",
+        executable = "img_trajectory",
+        name = "img_trajectory_publisher",
         output = "screen",
     )
 

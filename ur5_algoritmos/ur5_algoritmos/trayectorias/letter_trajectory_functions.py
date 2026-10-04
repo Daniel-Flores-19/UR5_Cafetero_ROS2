@@ -40,7 +40,7 @@ PATH_META = {
 
 DEFAULTS = {
     # Lienzo A4, ROI de escritura y fuente
-    "output_dir": "letras_png_A4",
+    "output_dir": os.path.expanduser("~/pintor_ws/src/letras_png_A4"),
     "px_per_mm": 6.0,
     "roi_x_mm": 0.0, "roi_y_mm": 249.0, "roi_w_mm": 210.0, "roi_h_mm": 46.0,
     "roi_margin_mm": 2.0,

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Calibración de SUPERFICIE 3x3 sobre hoja A4 para UR5 + sensor F/T.
+Calibración de SUPERFICIE 4x4 sobre hoja A4 para UR5 + sensor F/T.
 
 Por qué existe
 --------------
 `calibration_draw.py` palpa UN solo punto y guarda un único Z. Si la mesa no es
 plana, ese Z sirve en el centro pero deja el plumón apretado en unas zonas y
-levantado en otras. Aquí se palpan 9 puntos repartidos sobre la hoja y se ajusta
+levantado en otras. Aquí se palpan 16 puntos (malla 4x4) repartidos sobre la hoja y se ajusta
 una SUPERFICIE z(x, y): al dibujar se evalúa esa superficie en cada waypoint y
 la punta sigue la mesa real en lugar de un plano teórico.
 
@@ -16,28 +16,30 @@ estados multipunto y guardado del mapa).
 
 Secuencia
 ---------
-1. Ir a la postura central con el controlador de trayectoria.
-2. Construir la malla 3x3 sobre la hoja y VERIFICAR que los 9 puntos sean
+1. Leer la posición actual del robot y usarla como postura central (la malla
+   se centra en su XY). Con usar_posicion_actual:=false, en cambio, se va a
+   q_center con el controlador de trayectoria y se usa center_x/center_y.
+2. Construir la malla 4x4 sobre la hoja y VERIFICAR que los 16 puntos sean
    alcanzables (IK offline) antes de mover nada.
 3. Pasar a forward_position_controller y, en cada punto:
    traslado en XY a altura segura -> aproximación rápida -> bias local de Fz ->
    descenso lento -> contacto -> retracción.
 4. Ajustar z(x, y) por mínimos cuadrados y guardar:
      surface_calibration_A4.npz  -> modelo + malla, listo para consumir
-     surface_calibration_A4.csv  -> las 9 medidas crudas
+     surface_calibration_A4.csv  -> las 16 medidas crudas
      surface_calibration_A4.txt  -> resumen legible (residuos en mm)
-     ~/pintorV2_ws/calibracion/z_calibrado.txt           -> Z del centro, compatible con el launch actual
+     ~/pintor_ws/src/calibracion/z_calibrado.txt           -> Z del centro, compatible con el launch actual
 
 Todo es parámetro ROS: no hace falta editar el archivo para cambiar la hoja, el
 centro, el umbral de fuerza o las velocidades.
 
-    ros2 run ur5_algoritmos calibration_surface_A4_3x3 --ros-args \
+    ros2 run ur5_algoritmos calibration_surface_A4_4x4 --ros-args \
         -p center_x:=-0.759 -p center_y:=-0.085 -p probe_speed:=0.002
 
 Consumo posterior (por ejemplo en el nodo de dibujo):
 
-    from ur5_algoritmos.calibration_surface_A4_3x3 import SuperficieZ
-    sup = SuperficieZ.cargar('~/pintorV2_ws/calibracion/surface_calibration_A4.npz')
+    from ur5_algoritmos.calibration_surface_A4_4x4 import SuperficieZ
+    sup = SuperficieZ.cargar('~/pintor_ws/src/calibracion/surface_calibration_A4.npz')
     z = sup.z(x, y)          # escalar o array
 """
 
@@ -196,15 +198,23 @@ class UR5SurfaceCalibrationA4(Node):
         self.declare_parameter('paper_x', 0.210)
         self.declare_parameter('paper_y', 0.297)
         self.declare_parameter('edge_margin', 0.020)
+        # Puntos por lado de la malla (4 -> 4x4 = 16 palpadas). Con un número
+        # par no hay punto en el centro exacto: la Z del centro sale del modelo.
+        self.declare_parameter('grid_n', 4)
 
         # Centro de la hoja. Por defecto el mismo DRAW_CENTER que usa
-        # imagen_trajectory.py, para que la superficie cubra lo que se dibuja.
+        # img_trajectory.py, para que la superficie cubra lo que se dibuja.
         self.declare_parameter('center_x', -0.759)
         self.declare_parameter('center_y', -0.085)
         # True -> ignora center_x/center_y y usa el XY de la postura central.
         self.declare_parameter('center_from_fk', False)
 
         # --- Postura articular -----------------------------------------------
+        # True -> NO va a q_center: lee la posición actual del robot en
+        # /joint_states, la toma como postura central y centra la malla en su
+        # XY (ignora center_x/center_y y center_from_fk). Basta con dejar el
+        # plumón sobre el centro de la hoja antes de lanzar el nodo.
+        self.declare_parameter('usar_posicion_actual', True)
         self.declare_parameter('q_center', [3.40, -2.14, -1.42, -1.13, np.pi / 2.0, 0.0])
         self.declare_parameter('q_home', [np.pi, -2.14, -1.34, -1.23, np.pi / 2.0, 0.0])
         # Al terminar, volver a la postura central (el punto desde el que se
@@ -231,7 +241,7 @@ class UR5SurfaceCalibrationA4(Node):
         self.declare_parameter('pos_tol', 0.0015)          # [m] tolerancia XY/Z
         self.declare_parameter('probe_repeats', 1)         # palpadas por punto
 
-        # Z estimada para el PRIMER punto. NaN -> usa ~/pintorV2_ws/calibracion/z_calibrado.txt si existe
+        # Z estimada para el PRIMER punto. NaN -> usa ~/pintor_ws/src/calibracion/z_calibrado.txt si existe
         # y, si no, la altura de la postura central.
         self.declare_parameter('z_inicial_estimado', float('nan'))
         # Suelo absoluto: si la Z real baja de aquí, se aborta.
@@ -248,11 +258,9 @@ class UR5SurfaceCalibrationA4(Node):
         # El contacto se declara cuando la fuerza YA subió a contact_delta_n, o
         # sea con el plumón algo comprimido: la Z registrada queda unas décimas
         # de mm por debajo de la mesa. El sesgo es constante, así que no deforma
-        # la superficie, sólo la baja entera. Con 0.0 la superficie queda igual
-        # de sesgada que calibration_draw.py, que es lo que move_draw_sub ya
-        # compensa con su +0.0016 m; si se prefiere corregir aquí, poner ese
-        # valor en este parámetro y quitarlo del nodo de dibujo (nunca en los
-        # dos sitios a la vez).
+        # la superficie, sólo la baja entera. move_draw_sub dibuja por defecto
+        # a la Z calibrada tal cual (offset_contacto = offset_tapa = 0); si se
+        # corrige aquí, no poner también el offset en el nodo de dibujo.
         self.declare_parameter('contact_offset', 0.0)
         self.declare_parameter('baseline_samples', 25)
         self.declare_parameter('force_alpha', 0.15)
@@ -266,8 +274,8 @@ class UR5SurfaceCalibrationA4(Node):
         self.declare_parameter('controlador_posicion', 'forward_position_controller')
 
         # --- Salidas ----------------------------------------------------------
-        self.declare_parameter('output_prefix', '~/pintorV2_ws/calibracion/surface_calibration_A4')
-        self.declare_parameter('z_file', '~/pintorV2_ws/calibracion/z_calibrado.txt')
+        self.declare_parameter('output_prefix', '~/pintor_ws/src/calibracion/surface_calibration_A4')
+        self.declare_parameter('z_file', '~/pintor_ws/src/calibracion/z_calibrado.txt')
         self.declare_parameter('fit_model', 'auto')     # auto | plano | cuadratico
         self.declare_parameter('skip_failed', True)     # seguir si un punto falla
         self.declare_parameter('verificar_alcance', True)
@@ -277,10 +285,12 @@ class UR5SurfaceCalibrationA4(Node):
         self.paper_x = float(P('paper_x'))
         self.paper_y = float(P('paper_y'))
         self.edge_margin = float(P('edge_margin'))
+        self.grid_n = max(2, int(P('grid_n')))
         self.center_x = float(P('center_x'))
         self.center_y = float(P('center_y'))
         self.center_from_fk = bool(P('center_from_fk'))
 
+        self.usar_posicion_actual = bool(P('usar_posicion_actual'))
         self.q_center = np.array(P('q_center'), dtype=float)
         self.q_home = np.array(P('q_home'), dtype=float)
         self.volver_al_centro = bool(P('volver_al_centro'))
@@ -391,7 +401,7 @@ class UR5SurfaceCalibrationA4(Node):
         self.pose_base = None       # pose de referencia (orientación de palpado)
         self.safe_z = None
 
-        self.puntos = []            # malla 3x3
+        self.puntos = []            # malla grid_n x grid_n
         self.idx = 0                # punto actual
         self.repeticion = 0         # palpada actual dentro del punto
         self.z_repeticiones = []
@@ -409,7 +419,7 @@ class UR5SurfaceCalibrationA4(Node):
 
         self.timer = self.create_timer(self.dt, self.update, self.timer_group)
         self.get_logger().info(
-            "Calibración de superficie A4 3x3 iniciada. Esperando /joint_states...")
+            f"Calibración de superficie A4 {self.grid_n}x{self.grid_n} iniciada. Esperando /joint_states...")
 
     # =========================================================================
     # Callbacks
@@ -577,22 +587,28 @@ class UR5SurfaceCalibrationA4(Node):
     # =========================================================================
     # Malla
     # =========================================================================
-    def construir_malla(self, cx, cy):
-        """
-        Malla 3x3 sobre la hoja, recorrida en serpiente para no cruzar la hoja
-        de lado a lado entre punto y punto.
-
-        Índices: ix = columna (X del robot), iy = fila (Y del robot), ambos 0..2.
-        """
+    def offsets_malla(self):
+        """Desplazamientos (dx, dy) de las columnas/filas respecto al centro."""
         half_x = max(0.0, self.paper_x / 2.0 - self.edge_margin)
         half_y = max(0.0, self.paper_y / 2.0 - self.edge_margin)
+        return (np.linspace(-half_x, half_x, self.grid_n),
+                np.linspace(-half_y, half_y, self.grid_n))
 
-        dx = [-half_x, 0.0, +half_x]
-        dy = [-half_y, 0.0, +half_y]
+    def construir_malla(self, cx, cy):
+        """
+        Malla grid_n x grid_n (4x4 por defecto) sobre la hoja, equiespaciada
+        entre los márgenes y recorrida en serpiente para no cruzar la hoja de
+        lado a lado entre punto y punto.
+
+        Índices: ix = columna (X del robot), iy = fila (Y del robot), ambos
+        0..grid_n-1.
+        """
+        dx, dy = self.offsets_malla()
+        n = self.grid_n
 
         puntos = []
-        for iy in range(3):
-            columnas = range(3) if iy % 2 == 0 else range(2, -1, -1)
+        for iy in range(n):
+            columnas = range(n) if iy % 2 == 0 else range(n - 1, -1, -1)
             for ix in columnas:
                 puntos.append({
                     'ix': ix, 'iy': iy,
@@ -609,7 +625,7 @@ class UR5SurfaceCalibrationA4(Node):
         self.puntos = puntos
 
         self.get_logger().info(
-            f"Malla A4 3x3: {self.paper_x*1000:.0f} x {self.paper_y*1000:.0f} mm, "
+            f"Malla A4 {self.grid_n}x{self.grid_n}: {self.paper_x*1000:.0f} x {self.paper_y*1000:.0f} mm, "
             f"margen {self.edge_margin*1000:.0f} mm, centro ({cx:.4f}, {cy:.4f})")
         for i, p in enumerate(puntos, start=1):
             self.get_logger().info(
@@ -618,7 +634,7 @@ class UR5SurfaceCalibrationA4(Node):
 
     def verificar_malla(self):
         """
-        Comprueba con IK offline que los 9 puntos son alcanzables antes de mover
+        Comprueba con IK offline que todos los puntos son alcanzables antes de mover
         nada. Se verifica a la altura de VIAJE y a la de palpado, no a la de la
         postura central: el brazo alcanza más lejos cuanto más cerca está del
         plano del hombro, así que usar una altura que no es la de trabajo
@@ -658,7 +674,7 @@ class UR5SurfaceCalibrationA4(Node):
                 "antes de repetir. Nada se ha movido.")
             return False
 
-        self.get_logger().info("Los 9 puntos son alcanzables.")
+        self.get_logger().info(f"Los {len(self.puntos)} puntos son alcanzables.")
         return True
 
     # =========================================================================
@@ -695,7 +711,7 @@ class UR5SurfaceCalibrationA4(Node):
         self.phase = PHASE_TRAVEL
 
         self.get_logger().info(
-            f"--- P{self.idx + 1}/9 (palpada {self.repeticion + 1}/{self.probe_repeats}) "
+            f"--- P{self.idx + 1}/{len(self.puntos)} (palpada {self.repeticion + 1}/{self.probe_repeats}) "
             f"X={p['x']:.4f} Y={p['y']:.4f}  Z viaje={z_viaje:.4f} ---")
 
     def armar_deteccion(self, baseline, umbral):
@@ -818,7 +834,7 @@ class UR5SurfaceCalibrationA4(Node):
         """
         Mínimos cuadrados sobre las medidas válidas.
 
-        Con 9 puntos y 6 términos el cuadrático queda sobredeterminado: absorbe
+        Con 16 puntos y 6 términos el cuadrático queda sobredeterminado: absorbe
         la comba de la mesa sin seguir el ruido de cada palpada. Si hay menos de
         6 puntos se cae a plano, que sólo necesita 3.
         """
@@ -874,22 +890,22 @@ class UR5SurfaceCalibrationA4(Node):
         max_abs = float(np.max(np.abs(residuos)))
 
         # --- Malla regular, indexada por (iy, ix) -----------------------------
-        half_x = max(0.0, self.paper_x / 2.0 - self.edge_margin)
-        half_y = max(0.0, self.paper_y / 2.0 - self.edge_margin)
+        dx, dy = self.offsets_malla()
+        n = self.grid_n
 
-        x_values = self.centro[0] + np.array([-half_x, 0.0, +half_x])
-        y_values = self.centro[1] + np.array([-half_y, 0.0, +half_y])
+        x_values = self.centro[0] + dx
+        y_values = self.centro[1] + dy
 
         # Los huecos se rellenan con el modelo: así z_grid siempre es utilizable.
-        z_grid = np.full((3, 3), np.nan)
+        z_grid = np.full((n, n), np.nan)
         for m in self.medidas:
             if m['ok'] and np.isfinite(m['z']):
                 z_grid[m['iy'], m['ix']] = m['z']
 
         superficie = SuperficieZ(modelo, coef, self.centro, x_values, y_values, z_grid)
 
-        for iy in range(3):
-            for ix in range(3):
+        for iy in range(n):
+            for ix in range(n):
                 if not np.isfinite(z_grid[iy, ix]):
                     z_grid[iy, ix] = superficie.z(x_values[ix], y_values[iy])
         superficie.z_grid = z_grid
@@ -919,7 +935,7 @@ class UR5SurfaceCalibrationA4(Node):
         z_mod = np.array([[superficie.z(x, y) for x in x_values] for y in y_values])
 
         lineas = [
-            "Calibración de superficie A4 3x3",
+            f"Calibración de superficie A4 {n}x{n}",
             "=" * 60,
             f"Hoja            : {self.paper_x*1000:.0f} x {self.paper_y*1000:.0f} mm "
             f"(margen {self.edge_margin*1000:.0f} mm)",
@@ -930,7 +946,7 @@ class UR5SurfaceCalibrationA4(Node):
             + (" + c3*u^2 + c4*u*v + c5*v^2" if modelo == MODELO_CUADRATICO else "")
             + "   con u = x - cx, v = y - cy",
             f"Z en el centro  : {z_centro:.5f} m",
-            f"Puntos válidos  : {len(validas)}/9",
+            f"Puntos válidos  : {len(validas)}/{n * n}",
             f"Residuo RMS     : {rms*1000:.3f} mm",
             f"Residuo máximo  : {max_abs*1000:.3f} mm",
             f"Offset aplicado : {self.contact_offset*1000:.3f} mm "
@@ -940,11 +956,11 @@ class UR5SurfaceCalibrationA4(Node):
             "",
             "Z medida por celda [mm] (arriba = Y mayor, izquierda = X menor):",
         ]
-        for iy in range(2, -1, -1):
-            lineas.append("   " + "  ".join(f"{z_grid[iy, ix]*1000:9.3f}" for ix in range(3)))
+        for iy in range(n - 1, -1, -1):
+            lineas.append("   " + "  ".join(f"{z_grid[iy, ix]*1000:9.3f}" for ix in range(n)))
         lineas += ["", "Z del modelo por celda [mm]:"]
-        for iy in range(2, -1, -1):
-            lineas.append("   " + "  ".join(f"{z_mod[iy, ix]*1000:9.3f}" for ix in range(3)))
+        for iy in range(n - 1, -1, -1):
+            lineas.append("   " + "  ".join(f"{z_mod[iy, ix]*1000:9.3f}" for ix in range(n)))
 
         with open(self.txt_path, 'w') as f:
             f.write("\n".join(lineas) + "\n")
@@ -1009,12 +1025,20 @@ class UR5SurfaceCalibrationA4(Node):
 
             self.switch_my_controllers(self.ctrl_traj, self.ctrl_pos)
 
-            if not self.send_trajectory_goal(self.q_center, duration_sec=5.0):
-                self.get_logger().error("No se pudo llegar a la postura central.")
-                self.phase = PHASE_FINAL
-                return
+            if self.usar_posicion_actual:
+                # Sin moverse: la postura de partida es la que tiene el robot
+                # ahora. Se guarda como q_center para volver aquí al terminar.
+                time.sleep(0.3)   # lectura fresca de /joint_states
+                self.q_center = self.q_actual.copy()
+                self.get_logger().info(
+                    f"Usando la posición ACTUAL como centro: q={np.round(self.q_center, 3)}")
+            else:
+                if not self.send_trajectory_goal(self.q_center, duration_sec=5.0):
+                    self.get_logger().error("No se pudo llegar a la postura central.")
+                    self.phase = PHASE_FINAL
+                    return
 
-            time.sleep(0.3)   # dejar que /joint_states refleje la llegada
+                time.sleep(0.3)   # dejar que /joint_states refleje la llegada
 
             if self.q_actual is None:
                 self.get_logger().error("Sin lectura de /joint_states.")
@@ -1035,8 +1059,9 @@ class UR5SurfaceCalibrationA4(Node):
             self.pose_base = np.hstack((pose_fk[:3], quat))
             self.safe_z = float(pose_fk[2])
 
-            cx = pose_fk[0] if self.center_from_fk else self.center_x
-            cy = pose_fk[1] if self.center_from_fk else self.center_y
+            centro_fk = self.center_from_fk or self.usar_posicion_actual
+            cx = pose_fk[0] if centro_fk else self.center_x
+            cy = pose_fk[1] if centro_fk else self.center_y
             self.centro = np.array([cx, cy], dtype=float)
 
             self.get_logger().info(
