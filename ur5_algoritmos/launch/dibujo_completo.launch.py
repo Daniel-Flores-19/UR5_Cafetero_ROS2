@@ -5,7 +5,7 @@ from launch.actions import RegisterEventHandler, LogInfo, OpaqueFunction
 from launch.event_handlers import OnProcessExit
 
 def lanzar_nodo_dibujo(context, *args, **kwargs):
-    # Definimos la ruta donde el nodo de calibración guardó el dato
+    # calibration_surface_A4_4x4 deja aquí la Z del centro de la hoja
     ruta_archivo = os.path.expanduser('~/pintor_ws/src/calibracion/z_calibrado.txt')
     
     # Valor por defecto por si ocurre algún fallo de lectura
@@ -51,8 +51,8 @@ def generate_launch_description():
     # 1. DEFINICIÓN DEL NODO DE CALIBRACIÓN
     nodo_calibracion = Node(
         package='ur5_algoritmos',
-        executable='calibration_draw',
-        name='calibration_draw',
+        executable='calibration_surface_A4_4x4',
+        name='calibration_surface_A4_4x4',
         output='screen',
         emulate_tty=True
     )

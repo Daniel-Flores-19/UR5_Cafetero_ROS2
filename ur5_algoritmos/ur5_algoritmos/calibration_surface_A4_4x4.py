@@ -4,13 +4,13 @@ Calibración de SUPERFICIE 4x4 sobre hoja A4 para UR5 + sensor F/T.
 
 Por qué existe
 --------------
-`calibration_draw.py` palpa UN solo punto y guarda un único Z. Si la mesa no es
+El antiguo `calibration_draw.py` palpaba UN solo punto y guardaba un único Z. Si la mesa no es
 plana, ese Z sirve en el centro pero deja el plumón apretado en unas zonas y
 levantado en otras. Aquí se palpan 16 puntos (malla 4x4) repartidos sobre la hoja y se ajusta
 una SUPERFICIE z(x, y): al dibujar se evalúa esa superficie en cada waypoint y
 la punta sigue la mesa real en lugar de un plano teórico.
 
-Base: `calibration_draw.py` (detección de contacto por Fz y controladores que ya
+Base: el antiguo `calibration_draw.py` (detección de contacto por Fz y controladores que ya
 funcionan en el robot real) + `calibration_surface_A3_3x3.py` (máquina de
 estados multipunto y guardado del mapa).
 
@@ -228,7 +228,7 @@ class UR5SurfaceCalibrationA4(Node):
         # Formato [w, x, y, z]; el default es el que publica move_draw_sub.
         self.declare_parameter('quat_palpado', [0.0, 0.70710678, 0.70710678, 0.0])
         # True -> toma la orientación del FK central forzando w=0 y qz=0,
-        # como hace calibration_draw.py.
+        # como hacía el antiguo calibration_draw.py.
         self.declare_parameter('orientacion_desde_fk', False)
 
         # --- Palpado ---------------------------------------------------------
@@ -248,7 +248,7 @@ class UR5SurfaceCalibrationA4(Node):
         self.declare_parameter('z_min_seguridad', 0.100)
 
         # --- Fuerza ----------------------------------------------------------
-        # calibration_draw.py detecta con Fz < -3 N; aquí es un salto de -3 N
+        # el antiguo calibration_draw.py detectaba con Fz < -3 N; aquí es un salto de -3 N
         # respecto al bias local, que tolera la deriva del sensor entre puntos.
         self.declare_parameter('contact_delta_n', -3.0)
         self.declare_parameter('contact_samples', 3)
@@ -351,7 +351,7 @@ class UR5SurfaceCalibrationA4(Node):
         self.position_pub = self.create_publisher(
             Float64MultiArray, f'/{self.ctrl_pos}/commands', 10)
 
-        # Compatibilidad con calibration_draw.py: Z del centro de la hoja.
+        # Compatibilidad con el antiguo calibration_draw.py: Z del centro de la hoja.
         self.calib_z_pub = self.create_publisher(Float64, '/calibration_z', 10)
 
         # Superficie completa: [modelo, cx, cy, coef...]

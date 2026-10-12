@@ -1,8 +1,8 @@
 """
 Igual que dibujo_completo.launch.py, pero calibrando la MESA COMPLETA.
 
-Diferencia: en vez de calibration_draw (un solo punto, un solo Z para toda la
-hoja) lanza calibration_surface_A4_4x4, que palpa 16 puntos (malla 4x4) sobre una A4 y deja
+Diferencia: dibujo_completo usa solo la Z del centro (un solo Z para toda la
+hoja); este launch usa la superficie completa de calibration_surface_A4_4x4, que palpa 16 puntos (malla 4x4) sobre una A4 y deja
 la superficie en ~/pintor_ws/src/calibracion/surface_calibration_A4.npz. move_draw_sub la carga solo y
 evalúa z(x, y) en cada waypoint.
 

@@ -48,7 +48,6 @@ setup(
 
     entry_points={
         'console_scripts': [
-            'calibration_draw = ur5_algoritmos.calibration_draw:main',
             'calibration_surface_A4_4x4 = ur5_algoritmos.calibration_surface_A4_4x4:main',
             'move_draw_sub = ur5_algoritmos.move_draw_sub:main',
             'img_trajectory = ur5_algoritmos.img_trajectory:main',
