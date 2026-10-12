@@ -7,6 +7,10 @@ install(DIRECTORY config launch world models
   DESTINATION share/${PROJECT_NAME}
 )
 
+install(PROGRAMS scripts/trazo_rviz.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 if(BUILD_TESTING)
   find_package(launch_testing_ament_cmake)
   find_package(ament_cmake_pytest REQUIRED)

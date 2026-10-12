@@ -144,11 +144,16 @@ class LetterTrajectoryPublisher(Node):
         cyan_mask  = cv2.morphologyEx(cyan_mask,  cv2.MORPH_CLOSE, kernel)
         black_mask = cv2.morphologyEx(black_mask, cv2.MORPH_CLOSE, kernel)
 
+        # Utechie
+        white_mask = cv2.inRange(img, (200, 200, 200), (255, 255, 255))
+        white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_CLOSE, kernel)
+        white_polys = get_polygons(white_mask)
+
         cyan_polys  = get_polygons(cyan_mask)
         black_polys = get_polygons(black_mask)
 
-        cyan_strokes  = scanline_fill(cyan_mask,  spacing=105)
-        black_strokes = scanline_fill(black_mask, spacing=105)
+        #cyan_strokes  = scanline_fill(cyan_mask,  spacing=105)
+        #black_strokes = scanline_fill(black_mask, spacing=105)
 
         MAX_SPACING = 4.0
 
@@ -163,6 +168,10 @@ class LetterTrajectoryPublisher(Node):
             #for (x1, y1), (x2, y2) in black_strokes]
         )
 
+        white_traj = (
+            [resample_polyline(p, MAX_SPACING, closed=True) for p in white_polys]
+        )
+
         scale = min(DRAW_WIDTH / img.shape[1], DRAW_HEIGHT / img.shape[0])
         self.get_logger().info(
             f"Imagen {img.shape[1]}x{img.shape[0]} px -> "
@@ -172,6 +181,7 @@ class LetterTrajectoryPublisher(Node):
         color_groups = [
             [np.array([pixel_to_robot_xy(px, py, img.shape, self.center) for px, py in t]) for t in cyan_traj],
             [np.array([pixel_to_robot_xy(px, py, img.shape, self.center) for px, py in t]) for t in black_traj],
+            #[np.array([pixel_to_robot_xy(px, py, img.shape, self.center) for px, py in t]) for t in white_traj],
         ]
         return color_groups
 

@@ -1,0 +1,10 @@
+# Igual que initial_positions_pintor_ur5.yaml pero para el UR5e (modelo_robot:=ur5e):
+# brida 30 mm sobre el centro de la última calibración 4x4 (X=0.6481
+# Y=-0.1121, Z = 0.1918 + 0.030 en el marco DH), plumón hacia abajo.
+# Calculada con ik_dls_step + fkine_ur5 con DH del UR5e (error < 1e-12).
+shoulder_pan_joint: 2.7662
+shoulder_lift_joint: -1.0470
+elbow_joint: 1.6094
+wrist_1_joint: -2.1332
+wrist_2_joint: -1.5708
+wrist_3_joint: 2.7662

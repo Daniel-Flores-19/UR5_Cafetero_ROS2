@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 from copy import copy
 
@@ -28,6 +30,29 @@ def dh(d, theta, a, alpha):
 # CINEMÁTICA DIRECTA UR5
 # =========================
 
+# Parámetros DH nominales (d, a, alpha; theta = q) de cada modelo. El modelo se
+# elige con la variable de entorno PINTOR_UR_MODELO ("ur5" o "ur5e"), que
+# pintor.launch.py fija para todos los nodos con el argumento modelo_robot.
+# Por defecto "ur5" (los valores con que se escribió y probó este código).
+DH_MODELOS = {
+    "ur5": {   # UR5 CB3
+        "d":     (0.08916, 0.0, 0.0, 0.10915, 0.09465, 0.0823),
+        "a":     (0.0, -0.425, -0.39225, 0.0, 0.0, 0.0),
+        "alpha": (np.pi/2, 0.0, 0.0, np.pi/2, -np.pi/2, 0.0),
+    },
+    "ur5e": {  # UR5e (e-Series)
+        "d":     (0.1625, 0.0, 0.0, 0.1333, 0.0997, 0.0996),
+        "a":     (0.0, -0.425, -0.3922, 0.0, 0.0, 0.0),
+        "alpha": (np.pi/2, 0.0, 0.0, np.pi/2, -np.pi/2, 0.0),
+    },
+}
+
+MODELO = os.environ.get("PINTOR_UR_MODELO", "ur5").strip().lower()
+if MODELO not in DH_MODELOS:
+    raise ValueError(f"PINTOR_UR_MODELO={MODELO!r} no válido; usa {sorted(DH_MODELOS)}")
+DH = DH_MODELOS[MODELO]
+
+
 def fkine_ur5(q):
 
     '''
@@ -38,17 +63,13 @@ def fkine_ur5(q):
     - wrist_1_joint
     - wrist_2_joint
     - wrist_3_joint
+
+    Usa los DH del modelo elegido (DH_MODELOS[MODELO]); el nombre se conserva
+    para no tocar a quienes la llaman.
     '''
-
-    T1 = dh(0.08916, q[0], 0, np.pi/2)
-    T2 = dh(0, q[1], -0.425, 0)
-    T3 = dh(0, q[2], -0.39225, 0)
-    T4 = dh(0.10915, q[3], 0, np.pi/2)
-    T5 = dh(0.09465, q[4], 0, -np.pi/2)
-    T6 = dh(0.0823, q[5], 0, 0)
-
-    T = T1 @ T2 @ T3 @ T4 @ T5 @ T6
-
+    T = np.eye(4)
+    for i in range(6):
+        T = T @ dh(DH["d"][i], q[i], DH["a"][i], DH["alpha"][i])
     return T
 
 # =========================

@@ -14,3 +14,4 @@ from ur5_algoritmos.cinematica.fk_functions import *          # noqa: F401,F403
 from ur5_algoritmos.cinematica.ik_functions import *          # noqa: F401,F403
 from ur5_algoritmos.cinematica.kine_control_functions import *  # noqa: F401,F403
 from ur5_algoritmos.cinematica.QP_functions import *          # noqa: F401,F403
+from ur5_algoritmos.cinematica.jacobiano_analitico import *  # noqa: F401,F403

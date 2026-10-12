@@ -99,6 +99,37 @@ class UR5ControlNode(Node):
         # recolocar el robot a mano.
         self.declare_parameter('volver_al_inicio', True)
 
+        # Al terminar, el plumón primero SUBE en vertical esta altura sobre el
+        # papel y recién entonces viaja; el regreso termina a esta misma altura
+        # sobre el punto de inicio. Sin esto el viaje articular desde el último
+        # punto (plumón apoyado) rayaba la hoja en diagonal.
+        self.declare_parameter('altura_regreso', 0.03)
+
+        # ===== Seguimiento del trazo =====
+        # 'velocidad': la referencia recorre cada trazo a velocidad constante
+        #   (velocidad_dibujo) con avance + realimentación, integrando con el
+        #   tiempo real transcurrido; si el error pasa de error_max_avance la
+        #   referencia se detiene hasta que el robot la alcanza, así los
+        #   detalles pequeños no se recortan.
+        # 'puntos': comportamiento anterior, salta al siguiente waypoint cuando
+        #   el error baja de limit_error.
+        self.declare_parameter('modo_seguimiento', 'velocidad')
+        self.declare_parameter('velocidad_dibujo', 0.02)      # [m/s]
+        self.declare_parameter('error_max_avance', 0.0005)    # [m]
+        self.declare_parameter('tol_fin_trazo', 0.0003)       # [m]
+        self.declare_parameter('limit_error', 0.002)          # [m] modo 'puntos'
+        self.declare_parameter('tol_bajada', 0.0003)          # [m] (antes 0.1 mm)
+        self.declare_parameter('dt_max', 0.02)                # [s] tope por ciclo
+        P = lambda n: self.get_parameter(n).value
+        self.modo_seguimiento = str(P('modo_seguimiento'))
+        self.velocidad_dibujo = float(P('velocidad_dibujo'))
+        self.error_max_avance = float(P('error_max_avance'))
+        self.tol_fin_trazo = float(P('tol_fin_trazo'))
+        self.tol_bajada = float(P('tol_bajada'))
+        self.dt_max = float(P('dt_max'))
+        self.trazo = None            # estado del trazo en curso (modo velocidad)
+        self._t_prev = None
+
         # False -> el traslado al inicio del dibujo parte de la posición actual
         # del robot. True -> pasa antes por la postura fija de siempre.
         self.declare_parameter('ir_a_postura_fija', False)
@@ -140,7 +171,7 @@ class UR5ControlNode(Node):
         #                    con +0.5 mm, el plumón seguía presionando demasiado.
         #  offset_tapa     : si se calibra con la TAPA puesta, la punta queda
         #                    más arriba y hay que bajar (antes -8.0 mm).
-        self.declare_parameter('offset_contacto', 0.001)
+        self.declare_parameter('offset_contacto', 0.0004) # 0.0007 plumon grueso
         self.declare_parameter('offset_tapa', 0.0)
         self.offset_contacto = self.get_parameter(
             'offset_contacto').get_parameter_value().double_value
@@ -166,7 +197,7 @@ class UR5ControlNode(Node):
         
         
         self.cont = 0
-        self.limit_error = 0.002
+        self.limit_error = float(self.get_parameter('limit_error').value)
         self.up_subphase = 0
         self. flag_calibration = 0
         
@@ -416,6 +447,89 @@ class UR5ControlNode(Node):
             time.sleep(0.05)
 
     # =========================
+    # Dibujo a velocidad constante
+    # =========================
+    def _iniciar_trazo(self, i0):
+        """Prepara el trazo que empieza en i0 (hasta el siguiente flag == 1)."""
+        i1 = i0 + 1
+        while i1 < len(self.points) and self.flags[i1] != 1:
+            i1 += 1
+        pts = np.array(self.points[i0:i1], dtype=float)
+        seg = np.linalg.norm(np.diff(pts[:, :3], axis=0), axis=1) if len(pts) > 1 else np.zeros(0)
+        self.trazo = {'i0': i0, 'i1': i1, 'pts': pts,
+                      'cum': np.r_[0.0, np.cumsum(seg)], 's': 0.0}
+
+    def _referencia(self, s):
+        """Punto y tangente unitaria del trazo en la longitud de arco s."""
+        tr = self.trazo
+        cum, pts = tr['cum'], tr['pts']
+        if len(pts) == 1 or cum[-1] <= 0.0:
+            return pts[-1].copy(), np.zeros(3)
+        k = int(np.clip(np.searchsorted(cum, s, side='right') - 1, 0, len(cum) - 2))
+        largo = cum[k + 1] - cum[k]
+        u = 0.0 if largo <= 0 else (s - cum[k]) / largo
+        xd = pts[k].copy()
+        xd[:3] = pts[k, :3] + u * (pts[k + 1, :3] - pts[k, :3])
+        tang = (pts[k + 1, :3] - pts[k, :3]) / largo if largo > 0 else np.zeros(3)
+        return xd, tang
+
+    def dibujar_a_velocidad(self):
+        if self.trazo is None:
+            if self.punto_goal >= len(self.points):
+                self.phase = PHASE_FINISH
+                return
+            self._iniciar_trazo(self.punto_goal)
+        tr, dt = self.trazo, self.dt_real
+
+        xd, tang = self._referencia(tr['s'])
+        _, x = self.compute_fk(self.q)
+        error_pos = np.linalg.norm(xd[:3] - x[:3])
+
+        # La referencia sólo avanza si el robot la va siguiendo de cerca.
+        al_final = tr['s'] >= tr['cum'][-1]
+        if error_pos < self.error_max_avance and not al_final:
+            tr['s'] = min(tr['s'] + self.velocidad_dibujo * dt, tr['cum'][-1])
+            xd, tang = self._referencia(tr['s'])
+            xd_dot = np.r_[self.velocidad_dibujo * tang, 0.0, 0.0, 0.0]
+        else:
+            xd_dot = np.zeros(6)
+
+        dq, x, e = dq_seguimiento(self.q, xd, xd_dot, self.K)
+        self.q = self.q + np.clip(dq, -2.0, 2.0) * dt
+
+        msg = Float64MultiArray()
+        msg.data = self.q.tolist()
+        self.position_pub.publish(msg)
+        self.archivo.write(f"{self.get_clock().now().to_msg().sec},{x[0]},{x[1]},{x[2]}\n")
+
+        # Fin del trazo: referencia al final y robot encima de ella.
+        if tr['s'] >= tr['cum'][-1] and np.linalg.norm(e[:3]) < self.tol_fin_trazo:
+            self.punto_goal = tr['i1']
+            self.trazo = None
+            if self.punto_goal >= len(self.points):
+                self.get_logger().info("¡Llegamos al final del trazo! Pasando a fase final...")
+                self.phase = PHASE_FINISH
+            else:
+                self.phase = PHASE_UP
+                self.up_subphase = 0
+
+    # =========================
+    # IK puntual (DLS) para los movimientos del final
+    # =========================
+    def ik_hacia(self, q_semilla, xd, tol=1e-4, iteraciones=300):
+        """q cerca de q_semilla que alcanza xd [x, y, z, quat]; None si no converge."""
+        q = np.array(q_semilla, dtype=float)
+        xd = np.array(xd, dtype=float)
+        # Los puntos del dibujo traen el cuaternión [0, .70, .70, 0] sin
+        # normalizar: normalizado, la tolerancia sí se puede alcanzar.
+        xd[3:] /= np.linalg.norm(xd[3:])
+        for _ in range(iteraciones):
+            q = ik_dls_step(fkine_ur5, TF2xyzquat, q, xd, lamb=0.05)
+            if np.linalg.norm(pose_error(xd, TF2xyzquat(fkine_ur5(q)))) < tol:
+                return q
+        return None
+
+    # =========================
     # FK
     # =========================
     def compute_fk(self, q):
@@ -427,6 +541,11 @@ class UR5ControlNode(Node):
     # LOOP PRINCIPAL  50 Hz
     # =========================
     def update(self):
+        # Tiempo real desde el ciclo anterior (con tope): la integración no
+        # depende de cuántos ciclos por segundo alcance la PC.
+        ahora = time.perf_counter()
+        self.dt_real = self.dt if self._t_prev is None else min(ahora - self._t_prev, self.dt_max)
+        self._t_prev = ahora
 
         # ── FASE 0: esperar lectura real ──────────────────────────
         #if self.phase == PHASE_INIT:
@@ -468,8 +587,12 @@ class UR5ControlNode(Node):
             self.punto_goal = 0
             return
 
+        # ── FASE 3 (modo velocidad): trazo a velocidad constante ──
+        if self.phase == PHASE_DRAW and self.modo_seguimiento == 'velocidad':
+            self.dibujar_a_velocidad()
+
         # ── FASE 3: círculo con forward_position_controller ───────
-        if self.phase == PHASE_DRAW:
+        elif self.phase == PHASE_DRAW:
 
             # 1. Trayectoria deseada
             
@@ -529,7 +652,7 @@ class UR5ControlNode(Node):
                 flag = self.flags[self.punto_goal]
                 
                 if self.cont == 4:
-                    self.limit_error=0.002
+                    self.limit_error = float(self.get_parameter('limit_error').value)
                     
                 if flag == 1:
                     self.cont = 0
@@ -554,10 +677,10 @@ class UR5ControlNode(Node):
         
                 # Ejecutar UN paso matemático de QP hacia esa posición aérea
                 dq = compute_dq_qp(
-                fkine=fkine_ur5, jacobian_func=numerical_jacobian, TF2xyzquat=TF2xyzquat,
-                 q=self.q, xd=xd, K=4.0, lamb=self.lamb, dt=self.dt
+                fkine=fkine_ur5, jacobian_func=jacobiano_ur5, TF2xyzquat=TF2xyzquat,
+                 q=self.q, xd=xd, K=4.0, lamb=self.lamb, dt=self.dt_real
                 )
-                self.q += np.clip(dq, -2.0, 2.0) * self.dt
+                self.q += np.clip(dq, -2.0, 2.0) * self.dt_real
         
                 # Evaluar si ya terminó de subir de forma reactiva
                 if np.linalg.norm(pose_error(xd, x)) < 0.0008:
@@ -573,10 +696,10 @@ class UR5ControlNode(Node):
                 xd[2] = self.z_arriba(xd[0], xd[1])
         
                 dq = compute_dq_qp(
-                fkine=fkine_ur5, jacobian_func=numerical_jacobian, TF2xyzquat=TF2xyzquat,
-                q=self.q, xd=xd, K=4.0, lamb=self.lamb, dt=self.dt
+                fkine=fkine_ur5, jacobian_func=jacobiano_ur5, TF2xyzquat=TF2xyzquat,
+                q=self.q, xd=xd, K=4.0, lamb=self.lamb, dt=self.dt_real
                 )
-                self.q += np.clip(dq, -2.0, 2.0) * self.dt
+                self.q += np.clip(dq, -2.0, 2.0) * self.dt_real
         
                 # Evaluar si ya llegó a la vertical del nuevo punto
                 if np.linalg.norm(pose_error(xd, x)) < 0.002:
@@ -591,13 +714,13 @@ class UR5ControlNode(Node):
                 xd = self.points[self.punto_goal]
         
                 dq = compute_dq_qp(
-            fkine=fkine_ur5, jacobian_func=numerical_jacobian, TF2xyzquat=TF2xyzquat,
-            q=self.q, xd=xd, K=3.0, lamb=self.lamb, dt=self.dt
+            fkine=fkine_ur5, jacobian_func=jacobiano_ur5, TF2xyzquat=TF2xyzquat,
+            q=self.q, xd=xd, K=3.0, lamb=self.lamb, dt=self.dt_real
             )
-                self.q += np.clip(dq, -2.0, 2.0) * self.dt
+                self.q += np.clip(dq, -2.0, 2.0) * self.dt_real
         
             # Evaluar si ya tocó el papel con la precisión requerida
-                if np.linalg.norm(pose_error(xd, x)) < 0.0001:
+                if np.linalg.norm(pose_error(xd, x)) < self.tol_bajada:
                     print("Paso 3 Completado: Plumón en papel. Reanudando dibujo.")
                     self.phase = PHASE_DRAW  # Regresa a la fase de dibujo continuo
                     self.up_subphase = 0     # Resetea la subfase para la próxima vez que se requiera levantar
@@ -615,20 +738,36 @@ class UR5ControlNode(Node):
 
             volver = self.get_parameter(
                 'volver_al_inicio').get_parameter_value().bool_value
+            altura = self.get_parameter(
+                'altura_regreso').get_parameter_value().double_value
 
-            if volver and self.q_inicio is not None:
-                q_start = self.q_inicio
-                destino = 'postura de inicio (centro de la hoja)'
-            else:
-                q_start = q_fija
-                destino = 'postura fija'
-
-            self.get_logger().info(f"Dibujo terminado. Volviendo a la {destino}.")
             self.switch_my_controllers(
                 to_activate   = 'scaled_joint_trajectory_controller',
                 to_deactivate = 'forward_position_controller'
             )
-            
+
+            # 1. Levantar en vertical sobre el último punto dibujado.
+            xd_up = np.array(self.points[min(self.punto_goal, len(self.points) - 1)], dtype=float)
+            xd_up[2] = self.z_papel(xd_up[0], xd_up[1]) + altura
+            q_up = self.ik_hacia(self.q, xd_up)
+            if q_up is not None:
+                self.get_logger().info(f"Dibujo terminado. Levantando el plumón {altura*1000:.0f} mm.")
+                self.send_trajectory_goal(q_up, duration_sec=1.5)
+                self.q = q_up
+            else:
+                self.get_logger().warn("No se pudo calcular el levantamiento final; se regresa directo.")
+
+            # 2. Regresar: sobre el punto de inicio, a la misma altura segura.
+            q_start, destino = q_fija, 'postura fija'
+            if volver and self.q_inicio is not None:
+                _, x_ini = self.compute_fk(self.q_inicio)
+                xd_ini = np.array(x_ini, dtype=float)
+                xd_ini[2] = max(xd_ini[2], self.z_papel(xd_ini[0], xd_ini[1]) + altura)
+                q_ini_alto = self.ik_hacia(self.q_inicio, xd_ini)
+                q_start = q_ini_alto if q_ini_alto is not None else self.q_inicio
+                destino = 'posición de inicio (sobre el centro de la hoja)'
+
+            self.get_logger().info(f"Volviendo a la {destino}.")
             if self.send_trajectory_goal(q_start, duration_sec=3.0):
                 self.timer.cancel()
       

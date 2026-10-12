@@ -1,0 +1,13 @@
+# Postura de arranque en Gazebo: brida 30 mm sobre el centro de la última
+# calibración 4x4 (X=0.6481 Y=-0.1121 en el marco DH de fkine_ur5,
+# Z = 0.1918 + 0.030), con el plumón hacia abajo. Los nodos toman la posición
+# actual del robot como centro, así que el dibujo cae sobre la hoja simulada.
+# El brazo cede ~9 mm por gravedad antes de que se activen los controladores;
+# con 30 mm de margen el regreso final al inicio no roza el papel.
+# Calculada con ik_dls_step + fkine_ur5 con DH del UR5 (error < 1e-12).
+shoulder_pan_joint: 2.8036
+shoulder_lift_joint: -1.0898
+elbow_joint: 1.5150
+wrist_1_joint: -1.9961
+wrist_2_joint: -1.5708
+wrist_3_joint: 2.8036

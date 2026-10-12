@@ -81,7 +81,7 @@ SUPERFICIE_NPZ = "~/pintor_ws/src/calibracion/surface_calibration_A4.npz"
 
 # Parámetros propios del nodo, más los del pipeline que se sobrescriben aquí.
 NODE_DEFAULTS = {
-    "text": "UTEC",
+    "text": "Universidad de Ingenieria y Tecnologia",
     "font_path": choose_default_font_path(),
     "spline_points": 220,
     # ROI = la hoja A4 entera (vertical, 210 x 297 mm). El margen de 20 mm es el
@@ -108,7 +108,7 @@ NODE_DEFAULTS = {
     # 53.3 mm bajo el robot, +30 mm de espacio, +16.1 mm hasta el centro de la
     # palabra. Si cambia la imagen, el espacio o el tamaño del texto, recalcular.
     "offset_x": 0.0,
-    "offset_y": -0.0994,
+    "offset_y": -0.15,
     "draw_width": 0.105,
     "draw_height": 0.1485,
     "superficie_npz": SUPERFICIE_NPZ,

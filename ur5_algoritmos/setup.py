@@ -53,6 +53,8 @@ setup(
             'move_draw_sub = ur5_algoritmos.move_draw_sub:main',
             'img_trajectory = ur5_algoritmos.img_trajectory:main',
             'letter_trajectory = ur5_algoritmos.letter_trajectory:main',
+            'fourier_trajectory = ur5_algoritmos.fourier_trajectory:main',
+            'fourier_image_trajectory = ur5_algoritmos.fourier_image_trajectory:main',
             'painting_trajectory = ur5_algoritmos.painting_trajectory:main',
         ],
     },

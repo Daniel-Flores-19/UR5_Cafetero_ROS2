@@ -1,25 +1,25 @@
 Calibración de superficie A4 4x4
 ============================================================
 Hoja            : 210 x 297 mm (margen 20 mm)
-Centro          : X=0.6766  Y=0.0166
+Centro          : X=0.6481  Y=-0.1121
 Modelo          : cuadratico
-Coeficientes    : [ 0.187218  0.002264  0.003262  0.01192   0.005185 -0.010174]
+Coeficientes    : [ 0.191777  0.002882  0.00255   0.002435 -0.001897  0.003218]
    z(x,y) = c0 + c1*u + c2*v + c3*u^2 + c4*u*v + c5*v^2   con u = x - cx, v = y - cy
-Z en el centro  : 0.18722 m
+Z en el centro  : 0.19178 m
 Puntos válidos  : 16/16
 Residuo RMS     : 0.050 mm
-Residuo máximo  : 0.090 mm
+Residuo máximo  : 0.099 mm
 Offset aplicado : 0.000 mm (contact_offset; el contacto se detecta con el plumón ya comprimido)
-Desnivel medido : 1.105 mm (diferencia entre el punto más alto y el más bajo)
+Desnivel medido : 1.148 mm (diferencia entre el punto más alto y el más bajo)
 
 Z medida por celda [mm] (arriba = Y mayor, izquierda = X menor):
-     187.285    187.409    187.582    187.734
-     187.207    187.369    187.466    187.688
-     186.929    186.945    187.038    187.339
-     186.629    186.633    186.636    186.878
+     191.960    192.091    192.295    192.392
+     191.646    191.729    191.958    192.076
+     191.459    191.691    191.744    192.041
+     191.244    191.422    191.540    191.777
 
 Z del modelo por celda [mm]:
-     187.307    187.396    187.562    187.805
-     187.214    187.279    187.420    187.637
-     186.973    187.012    187.127    187.320
-     186.582    186.596    186.686    186.853
+     191.952    192.085    192.235    192.400
+     191.672    191.815    191.974    192.148
+     191.440    191.592    191.760    191.944
+     191.255    191.416    191.593    191.786
